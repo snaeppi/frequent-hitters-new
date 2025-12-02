@@ -51,15 +51,15 @@ integration_artifacts/
 pubchem-bioassay/data/assay_tables/*.parquet
 
 # Top-level outputs
-outputs/
-fh-data-pipeline/outputs/
+/outputs/
+data-pipeline/outputs/
 
 # Generated scripts
 train-pred/scripts/
 
-# PubChem Bioassay data: ignore all outputs by default,
-# but keep selected LFS-tracked artifacts.
-pubchem-bioassay/outputs/*
-!pubchem-bioassay/outputs/assay_metadata.sqlite
-!pubchem-bioassay/outputs/assay_metadata.csv
-!pubchem-bioassay/outputs/assay_rscores.parquet
+# PubChem Bioassay outputs:
+# keep the main artifacts under version control, but
+# ignore large intermediate directories.
+pubchem-bioassay/outputs/aggregated/
+pubchem-bioassay/outputs/llm_annotations/
+pubchem-bioassay/outputs/assay_rscores.parquet

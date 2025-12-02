@@ -2,4 +2,4 @@ pubchem-bioassay/data/hd3_annotations.csv filter=lfs diff=lfs merge=lfs -text
 pubchem-bioassay/data/pcassay_result.txt filter=lfs diff=lfs merge=lfs -text
 pubchem-bioassay/outputs/assay_metadata.sqlite filter=lfs diff=lfs merge=lfs -text
 pubchem-bioassay/outputs/assay_metadata.csv filter=lfs diff=lfs merge=lfs -text
-pubchem-bioassay/outputs/assay_rscores.parquet filter=lfs diff=lfs merge=lfs -text
+pubchem-bioassay/outputs/assay_rscores.parquet.part* filter=lfs diff=lfs merge=lfs -text
