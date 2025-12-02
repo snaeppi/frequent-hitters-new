@@ -1,0 +1,80 @@
+# Thresholded classifiers on PubChem for biochemical/cellular assays.
+global:
+  models_dir: /path/to/pubchem_models
+  temp_dir: /path/to/pubchem_temp
+  cpus: 4
+  submit: false
+  datasets:
+    bio_all_reg: /path/to/processed/pubchem_rscore/biochemical_regression_trainval.parquet
+    bio_all_cal: /path/to/processed/pubchem_rscore/biochemical_calibration.parquet
+    bio_all_test: /path/to/processed/pubchem_rscore/biochemical_test.parquet
+    bio_all_thresholds: /path/to/processed/pubchem_rscore/biochemical_thresholds.json
+    cell_all_reg: /path/to/processed/pubchem_rscore/cellular_regression_trainval.parquet
+    cell_all_cal: /path/to/processed/pubchem_rscore/cellular_calibration.parquet
+    cell_all_test: /path/to/processed/pubchem_rscore/cellular_test.parquet
+    cell_all_thresholds: /path/to/processed/pubchem_rscore/cellular_thresholds.json
+
+tasks:
+  - type: threshold
+    job_name: thr_bio_all_min100
+    trainval_path: bio_all_reg
+    calibration_path: bio_all_cal
+    test_path: bio_all_test
+    thresholds_json: bio_all_thresholds
+    metric_column: score
+    target_column: target
+    compound_min_screens: 100
+    compound_screens_column: screens
+    predict_calibration: true
+    predict_test: true
+    thresholds:
+      - suffix: p50
+        lower_percentile: 50
+        upper_percentile: 50
+      - suffix: p60
+        lower_percentile: 50
+        upper_percentile: 60
+      - suffix: p70
+        lower_percentile: 50
+        upper_percentile: 70
+      - suffix: p80
+        lower_percentile: 50
+        upper_percentile: 80
+      - suffix: p90
+        lower_percentile: 50
+        upper_percentile: 90
+      - suffix: p95
+        lower_percentile: 50
+        upper_percentile: 95
+
+  - type: threshold
+    job_name: thr_cell_all_min100
+    trainval_path: cell_all_reg
+    calibration_path: cell_all_cal
+    test_path: cell_all_test
+    thresholds_json: cell_all_thresholds
+    metric_column: score
+    target_column: target
+    compound_min_screens: 100
+    compound_screens_column: screens
+    predict_calibration: true
+    predict_test: true
+    thresholds:
+      - suffix: p50
+        lower_percentile: 50
+        upper_percentile: 50
+      - suffix: p60
+        lower_percentile: 50
+        upper_percentile: 60
+      - suffix: p70
+        lower_percentile: 50
+        upper_percentile: 70
+      - suffix: p80
+        lower_percentile: 50
+        upper_percentile: 80
+      - suffix: p90
+        lower_percentile: 50
+        upper_percentile: 90
+      - suffix: p95
+        lower_percentile: 50
+        upper_percentile: 95

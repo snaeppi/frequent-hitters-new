@@ -1,0 +1,35 @@
+# Internal UGE-based threshold classifier experiments.
+# Mirrors the public threshold grid but with cluster-specific paths and qsub.
+
+global:
+  email: samuli.naeppi@novartis.com
+  logs_dir: /home/naeppsa1/fh-experiments/final/pubchem/outputs/logs
+  models_dir: /home/naeppsa1/fh-experiments/final/pubchem/outputs/models
+  temp_dir: /home/naeppsa1/fh-experiments/final/pubchem/outputs/temp
+  conda_commands:
+    - ml Conda
+    - ml Conda proxy
+    - module unload PythonDS
+    - conda deactivate
+  conda_activate: conda activate chemprop-fork
+  gpu_map_script: /cm/shared/apps/nibri/sciComp/get_gpu_map.sh
+  cpus: 4
+  memory: 20G
+  runtime: 100000
+  gpu_cards: 1
+  submit: true
+  qsub_command: qsub
+  datasets:
+    bio_all_reg: /home/naeppsa1/fh-experiments/final/data/processed/pubchem_rscore/biochemical/biochemical_regression_trainval.parquet
+    bio_all_cal: /home/naeppsa1/fh-experiments/final/data/processed/pubchem_rscore/biochemical/biochemical_calibration.parquet
+    bio_all_test: /home/naeppsa1/fh-experiments/final/data/processed/pubchem_rscore/biochemical/biochemical_test.parquet
+    bio_all_thresholds: /home/naeppsa1/fh-experiments/final/data/processed/pubchem_rscore/biochemical/biochemical_thresholds.json
+    cell_all_reg: /home/naeppsa1/fh-experiments/final/data/processed/pubchem_rscore/cellular/cellular_regression_trainval.parquet
+    cell_all_cal: /home/naeppsa1/fh-experiments/final/data/processed/pubchem_rscore/cellular/cellular_calibration.parquet
+    cell_all_test: /home/naeppsa1/fh-experiments/final/data/processed/pubchem_rscore/cellular/cellular_test.parquet
+    cell_all_thresholds: /home/naeppsa1/fh-experiments/final/data/processed/pubchem_rscore/cellular/cellular_thresholds.json
+
+tasks:
+  # (tasks copied from configs/threshold_experiments.yaml)
+  # Biochemical / cellular grids over min_screens and percentiles.
+

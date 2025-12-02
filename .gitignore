@@ -1,0 +1,65 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+*.egg-info/
+*.egg
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs, coverage, test artifacts
+*.log
+.coverage
+.coverage.*
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE/editor files
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Project-specific ignores
+integration_artifacts/
+
+# Data files
+pubchem-bioassay/data/assay_tables/*.parquet
+
+# Top-level outputs
+outputs/
+fh-data-pipeline/outputs/
+
+# Generated scripts
+train-pred/scripts/
+
+# PubChem Bioassay data: ignore all outputs by default,
+# but keep selected LFS-tracked artifacts.
+pubchem-bioassay/outputs/*
+!pubchem-bioassay/outputs/assay_metadata.sqlite
+!pubchem-bioassay/outputs/assay_metadata.csv
+!pubchem-bioassay/outputs/assay_rscores.parquet

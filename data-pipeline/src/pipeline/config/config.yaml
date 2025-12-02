@@ -1,0 +1,7 @@
+defaults:
+  - paths: paths
+  - filters: filters
+  - split: split
+
+assay_format: both  # one of: biochemical | cellular | both
+enable_plots: true

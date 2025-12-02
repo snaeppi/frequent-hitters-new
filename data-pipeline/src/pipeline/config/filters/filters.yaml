@@ -1,0 +1,14 @@
+# Controls for assay-level filters and compound-level EB selection
+
+# Minimum screens per assay required before computing statistics/outlier filtering
+min_screens_per_assay: 10000
+
+# Minimum number of selected screens required per compound
+min_screens_per_compound: 20
+
+# Minimum number of selected screens required for EB prior fit.
+# This can be stricter than min_screens_per_compound.
+min_screens_for_prior_fit: 20
+
+# Outlier detection on assay hit rates
+assay_hit_rate_outlier_std_k: 3.0

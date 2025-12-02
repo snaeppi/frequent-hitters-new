@@ -1,0 +1,7 @@
+scaffold_type: murcko
+seed: 1337
+fractions:
+  train: 0.80
+  val: 0.10
+  calibration: 0.05
+  test: 0.05

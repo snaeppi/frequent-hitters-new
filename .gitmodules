@@ -1,0 +1,4 @@
+[submodule "chemprop"]
+	path = chemprop
+	url = https://github.com/snaeppi/chemprop.git
+	branch = all-my-features

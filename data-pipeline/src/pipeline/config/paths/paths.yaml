@@ -1,0 +1,5 @@
+input:
+  biochemical: null
+  cellular: null
+output_root: ./outputs
+scaffolds: null
