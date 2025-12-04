@@ -20,13 +20,12 @@ dependencies:
       - rich==14.2.0
 
       # Chemprop deps
-      - chemprop==2.2.1
-      - torch==2.9.1
       - scikit-learn==1.7.2
       - scipy==1.16.3
       - astartes[molecules]==1.3.3
       - configargparse==1.7.1
       - descriptastorus==2.8.0
+      # please install torch and lightning separately to get the correct CUDA version
 
       # PubChem ETL core deps (non-LLM)
       - httpx
@@ -37,9 +36,9 @@ dependencies:
 
       # After creating the environment, install the local packages (non-editable):
       #   cd chemprop && pip install --no-deps .
-      #   cd ../data-pipeline && pip install --no-deps .
-      #   cd ../train-pred && pip install --no-deps .
-      #   cd ../clean-data && pip install --no-deps .
+      #   cd ../dataset-pipeline && pip install --no-deps .
+      #   cd ../model-jobs && pip install --no-deps .
+      #   cd ../assay-cleaning && pip install --no-deps .
+      #   cd ../assay-etl && pip install --no-deps .
       #
-      # LLM-related extras for pubchem-bioassay can be installed separately if needed:
-      #   pip install "langchain" "langchain-openai" "langchain-google-vertexai" "langchain-xai"
+      # assay-etl does not require LLM extras.

@@ -1,0 +1,45 @@
+# Internal UGE-based submission plan for the private cluster.
+# This file is not intended for public release.
+
+global:
+  email: samuli.naeppi@novartis.com
+  logs_dir: /home/naeppsa1/fh-experiments/final/outputs/logs
+  models_dir: /home/naeppsa1/fh-experiments/final/outputs/models
+  temp_dir: /home/naeppsa1/fh-experiments/final/outputs/temp
+  # Chemprop runs inside the chemprop-fork Conda environment on the cluster.
+  conda_commands:
+    - ml Conda
+    - ml Conda proxy
+    - module unload PythonDS
+    - conda deactivate
+  conda_activate: conda activate frequent-hitters
+  gpu_map_script: /cm/shared/apps/nibri/sciComp/get_gpu_map.sh
+  cpus: 4
+  memory: 20G
+  runtime: 100000
+  gpu_cards: 1
+  submit: true
+  datasets:
+    bio_all_reg: /home/naeppsa1/fh-experiments/final/data/processed/all/biochemical/biochemical_regression_trainval.parquet
+    bio_all_mt: /home/naeppsa1/fh-experiments/final/data/processed/all/biochemical/biochemical_multilabel_trainval.parquet
+    bio_all_cal: /home/naeppsa1/fh-experiments/final/data/processed/all/biochemical/biochemical_calibration.parquet
+    bio_all_test: /home/naeppsa1/fh-experiments/final/data/processed/all/biochemical/biochemical_test.parquet
+    bio_all_thresholds: /home/naeppsa1/fh-experiments/final/data/processed/all/biochemical/biochemical_thresholds.json
+    bio_100k_reg: /home/naeppsa1/fh-experiments/final/data/processed/100k/biochemical/biochemical_regression_trainval.parquet
+    bio_100k_mt: /home/naeppsa1/fh-experiments/final/data/processed/100k/biochemical/biochemical_multilabel_trainval.parquet
+    bio_100k_cal: /home/naeppsa1/fh-experiments/final/data/processed/100k/biochemical/biochemical_calibration.parquet
+    bio_100k_test: /home/naeppsa1/fh-experiments/final/data/processed/100k/biochemical/biochemical_test.parquet
+    bio_100k_thresholds: /home/naeppsa1/fh-experiments/final/data/processed/100k/biochemical/biochemical_thresholds.json
+    cell_all_reg: /home/naeppsa1/fh-experiments/final/data/processed/all/cellular/cellular_regression_trainval.parquet
+    cell_all_mt: /home/naeppsa1/fh-experiments/final/data/processed/all/cellular/cellular_multilabel_trainval.parquet
+    cell_all_cal: /home/naeppsa1/fh-experiments/final/data/processed/all/cellular/cellular_calibration.parquet
+    cell_all_test: /home/naeppsa1/fh-experiments/final/data/processed/all/cellular/cellular_test.parquet
+    cell_100k_reg: /home/naeppsa1/fh-experiments/final/data/processed/100k/cellular/cellular_regression_trainval.parquet
+    cell_100k_mt: /home/naeppsa1/fh-experiments/final/data/processed/100k/cellular/cellular_multilabel_trainval.parquet
+    cell_100k_cal: /home/naeppsa1/fh-experiments/final/data/processed/100k/cellular/cellular_calibration.parquet
+    cell_100k_test: /home/naeppsa1/fh-experiments/final/data/processed/100k/cellular/cellular_test.parquet
+
+tasks:
+  # (tasks copied from configs/main_experiments.yaml)
+  # Multi-task, regression, and threshold sweeps as used on the cluster.
+  # Kept verbatim here so the public configs can be simplified.

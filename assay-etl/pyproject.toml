@@ -1,0 +1,47 @@
+[project]
+name = "assay-etl"
+version = "0.1.0"
+description = "PubChem bioassay ETL and manual annotation CLI."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.28.1",
+    "lxml>=4.9.0",
+    "numpy>=2.3.5",
+    "polars>=1.35.2",
+    "pydantic>=2.12.4",
+    "rich>=14.2.0",
+    "typer>=0.20.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.9",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+assay-etl = "assay_etl.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.9.9,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+assay-etl = { path = "src" }
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N", "S"]
+ignore = ["E203", "E501", "B008", "B009", "B905", "S103", "S110", "S320", "S603", "S607", "UP006", "UP007", "UP015", "UP035", "UP038", "B904", "F401", "F811", "F841", "F541", "I001"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+ignore_missing_imports = true

@@ -48,18 +48,18 @@ Thumbs.db
 integration_artifacts/
 
 # Data files
-pubchem-bioassay/data/assay_tables/*.parquet
+assay-etl/data/assay_tables/*.parquet
 
 # Top-level outputs
 /outputs/
-data-pipeline/outputs/
+dataset-pipeline/outputs/
 
 # Generated scripts
-train-pred/scripts/
+model-jobs/scripts/
 
 # PubChem Bioassay outputs:
 # keep the main artifacts under version control, but
 # ignore large intermediate directories.
-pubchem-bioassay/outputs/aggregated/
-pubchem-bioassay/outputs/llm_annotations/
-pubchem-bioassay/outputs/assay_rscores.parquet
+assay-etl/data/assay_tables/
+assay-etl/outputs/aggregated/
+assay-etl/outputs/assay_rscores.parquet

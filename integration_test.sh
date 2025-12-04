@@ -25,15 +25,15 @@ pushd "${ROOT_DIR}/chemprop" >/dev/null
 python -m pip install --no-deps .
 popd >/dev/null
 
-pushd "${ROOT_DIR}/data-pipeline" >/dev/null
+pushd "${ROOT_DIR}/dataset-pipeline" >/dev/null
 python -m pip install --no-deps .
 popd >/dev/null
 
-pushd "${ROOT_DIR}/train-pred" >/dev/null
+pushd "${ROOT_DIR}/model-jobs" >/dev/null
 python -m pip install --no-deps .
 popd >/dev/null
 
-pushd "${ROOT_DIR}/clean-data" >/dev/null
+pushd "${ROOT_DIR}/assay-cleaning" >/dev/null
 python -m pip install --no-deps .
 popd >/dev/null
 
@@ -45,7 +45,7 @@ from pathlib import Path
 import polars as pl
 
 root = Path(__file__).resolve().parent
-hits_path = root / "pubchem-bioassay/outputs/assay_rscores.parquet"
+hits_path = root / "assay-etl/outputs/assay_rscores.parquet"
 if not hits_path.exists():
     raise SystemExit(f"Missing assay_rscores.parquet at {hits_path}")
 
@@ -65,16 +65,16 @@ hits.write_parquet(subset_path)
 PY
 
 HTS_SUBSET="${RAW_DIR}/assay_rscores_subset.parquet"
-ASSAY_META="${ROOT_DIR}/pubchem-bioassay/outputs/assay_metadata.csv"
+ASSAY_META="${ROOT_DIR}/assay-etl/outputs/assay_metadata.csv"
 
 if [[ ! -f "${ASSAY_META}" ]]; then
   echo "[ERROR] Missing assay_metadata.csv at ${ASSAY_META}" >&2
   exit 1
 fi
 
-echo "[INFO] Running clean_split CLI on sampled HTS data"
+echo "[INFO] Running assay-cleaning CLI on sampled HTS data"
 
-python -m clean_split.cli \
+python -m assay_cleaning.cli clean \
   --hts-file "${HTS_SUBSET}" \
   --assay-props-file "${ASSAY_META}" \
   --id-col "compound_id" \
@@ -97,9 +97,9 @@ if [[ ! -f "${BIO_HITS}" && ! -f "${CELL_HITS}" ]]; then
   exit 1
 fi
 
-echo "[INFO] Running data-pipeline on subsets"
+echo "[INFO] Running dataset pipeline on subsets"
 
-PIPELINE_CMD=(python -m pipeline.cli)
+PIPELINE_CMD=(python -m dataset_pipeline.cli)
 PIPELINE_ARGS=(
   assay_format=both
   "paths.output_root=${PIPELINE_OUT}"
@@ -133,7 +133,7 @@ fi
 
 echo "[INFO] Using assay_format=${ASSAY_FORMAT} for downstream training"
 
-echo "[INFO] Preparing train-pred job config"
+echo "[INFO] Preparing model-jobs config"
 
 JOBS_CONFIG="${JOBS_DIR}/fh_jobs.yaml"
 
@@ -194,10 +194,10 @@ tasks:
     epochs: 3
 EOF
 
-echo "[INFO] Generating job scripts with train-pred"
+echo "[INFO] Generating job scripts with model-jobs"
 
-pushd "${ROOT_DIR}/train-pred" >/dev/null
-PYTHONPATH=src python -m train_pred.cli submit-jobs \
+pushd "${ROOT_DIR}/model-jobs" >/dev/null
+PYTHONPATH=src python -m model_jobs.cli submit-jobs \
   --config "${JOBS_CONFIG}" \
   --output-dir "${JOBS_DIR}/scripts" \
   --dry-run
