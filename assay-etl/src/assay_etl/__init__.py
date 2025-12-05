@@ -7,5 +7,3 @@ works purely with local files (CSV/Parquet/CSV.gz).
 __all__ = [
     "cli",
 ]
-
-

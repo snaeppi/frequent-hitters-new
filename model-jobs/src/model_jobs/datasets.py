@@ -354,9 +354,13 @@ def resolve_thresholds(
 
     # Case 2: derive from JSON mapping of percentiles
     if thresholds_json is None:
-        raise ValueError("Must provide either explicit thresholds or a thresholds_json with percentiles.")
+        raise ValueError(
+            "Must provide either explicit thresholds or a thresholds_json with percentiles."
+        )
     if lower_percentile is None or upper_percentile is None:
-        raise ValueError("Both lower_percentile and upper_percentile are required with thresholds_json.")
+        raise ValueError(
+            "Both lower_percentile and upper_percentile are required with thresholds_json."
+        )
 
     mapping = _load_threshold_mapping(Path(thresholds_json))
     if not mapping:

@@ -126,7 +126,9 @@ def _resolve_path(value: str | Path, base: Path) -> Path:
     return path
 
 
-def _resolve_dataset_path(value: str | Path | None, global_cfg: BaseGlobalConfig, field_name: str) -> Path:
+def _resolve_dataset_path(
+    value: str | Path | None, global_cfg: BaseGlobalConfig, field_name: str
+) -> Path:
     if value is None:
         raise ConfigError(f"Missing required path for {field_name}.")
     if isinstance(value, Path):
@@ -148,7 +150,9 @@ def _slugify(name: str) -> str:
     return slug.strip("_") or "job"
 
 
-def _format_model_dir(raw_value: str | None, global_cfg: BaseGlobalConfig, context: dict[str, str]) -> Path:
+def _format_model_dir(
+    raw_value: str | None, global_cfg: BaseGlobalConfig, context: dict[str, str]
+) -> Path:
     if raw_value is None:
         return global_cfg.models_dir / context["job_slug"]
     formatted = raw_value.format(**context)
@@ -199,7 +203,9 @@ def _collect_prediction_sets(
         name = spec.get("name")
         if not name:
             raise ConfigError("prediction_sets entry missing 'name'.")
-        dataset_path = _resolve_dataset_path(spec.get("input_path"), global_cfg, f"prediction_sets[{name}].input_path")
+        dataset_path = _resolve_dataset_path(
+            spec.get("input_path"), global_cfg, f"prediction_sets[{name}].input_path"
+        )
         preds_value = spec.get("output_path")
         if preds_value:
             preds_path = _resolve_path(preds_value, global_cfg.base_path)
@@ -220,7 +226,9 @@ def _collect_prediction_sets(
                 input_path=dataset_path,
                 preds_path=preds_path,
                 filters=filters_list,
-                compound_min_screens=_coerce_min(set_min) if set_min is not None else default_min_value,
+                compound_min_screens=_coerce_min(set_min)
+                if set_min is not None
+                else default_min_value,
                 compound_screens_column=str(set_screens_column),
             )
         )
@@ -274,11 +282,15 @@ def _build_multilabel_jobs(task: dict, global_cfg: GC, renderers: Renderers) -> 
         seed=seed,
         ensemble_size=ensemble_size,
         train_enabled=bool(task.get("train", True)),
-        classification_metrics=_task_metrics(task, "classification_metrics", global_cfg.metrics_classification),
+        classification_metrics=_task_metrics(
+            task, "classification_metrics", global_cfg.metrics_classification
+        ),
         renderers=renderers,
     )
     filename = f"{job_slug}.sh"
-    return [JobDefinition(job_name=job_name, filename=filename, content=content, submit=submit_flag)]
+    return [
+        JobDefinition(job_name=job_name, filename=filename, content=content, submit=submit_flag)
+    ]
 
 
 def _build_regression_jobs(task: dict, global_cfg: GC, renderers: Renderers) -> list[JobDefinition]:
@@ -326,7 +338,9 @@ def _build_regression_jobs(task: dict, global_cfg: GC, renderers: Renderers) -> 
         if predict_test:
             default_prediction_sets.append(("test", task.get("test_path")))
 
-        prediction_sets = _collect_prediction_sets(task, model_dir, global_cfg, default_prediction_sets)
+        prediction_sets = _collect_prediction_sets(
+            task, model_dir, global_cfg, default_prediction_sets
+        )
 
         submit_flag = _should_submit(task, global_cfg)
         content = _render_regression_script(
@@ -384,9 +398,13 @@ def _build_threshold_jobs(task: dict, global_cfg: GC, renderers: Renderers) -> l
         lower_threshold = spec.get("lower_threshold")
         upper_threshold = spec.get("upper_threshold")
         if lower_percentile is None and lower_threshold is None:
-            raise ConfigError("Threshold specification requires lower_percentile or lower_threshold.")
+            raise ConfigError(
+                "Threshold specification requires lower_percentile or lower_threshold."
+            )
         if upper_percentile is None and upper_threshold is None:
-            raise ConfigError("Threshold specification requires upper_percentile or upper_threshold.")
+            raise ConfigError(
+                "Threshold specification requires upper_percentile or upper_threshold."
+            )
 
         suffix = spec.get("suffix") or spec.get("name_suffix")
         if suffix:
@@ -396,7 +414,7 @@ def _build_threshold_jobs(task: dict, global_cfg: GC, renderers: Renderers) -> l
         elif lower_threshold is not None and upper_threshold is not None:
             suffix_str = f"thr{lower_threshold}_{upper_threshold}"
         else:
-            suffix_str = f"combo{idx+1}"
+            suffix_str = f"combo{idx + 1}"
 
         per_job_name = f"{job_name}_{suffix_str}"
         per_slug = _slugify(per_job_name)
@@ -413,7 +431,9 @@ def _build_threshold_jobs(task: dict, global_cfg: GC, renderers: Renderers) -> l
             default_prediction_sets.append(("calibration", task.get("calibration_path")))
         if predict_test:
             default_prediction_sets.append(("test", task.get("test_path")))
-        prediction_sets = _collect_prediction_sets(task, model_dir, global_cfg, default_prediction_sets)
+        prediction_sets = _collect_prediction_sets(
+            task, model_dir, global_cfg, default_prediction_sets
+        )
 
         threshold_args = _threshold_arguments(
             lower_percentile=lower_percentile,
@@ -439,7 +459,9 @@ def _build_threshold_jobs(task: dict, global_cfg: GC, renderers: Renderers) -> l
             ensemble_size=ensemble_size,
             train_enabled=bool(task.get("train", True)),
             threshold_args=threshold_args,
-            classification_metrics=_task_metrics(task, "classification_metrics", global_cfg.metrics_classification),
+            classification_metrics=_task_metrics(
+                task, "classification_metrics", global_cfg.metrics_classification
+            ),
             compound_min_screens=compound_min_value,
             compound_screens_column=compound_screens_column,
             renderers=renderers,
@@ -456,13 +478,19 @@ def _build_prediction_jobs(task: dict, global_cfg: GC, renderers: Renderers) -> 
     model_context = {"job_name": job_name, "job_slug": job_slug}
     model_dir = _format_model_dir(task.get("model_dir"), global_cfg, model_context)
     model_path_value = task.get("model_path")
-    model_path = _resolve_dataset_path(model_path_value, global_cfg, "model_path") if model_path_value else model_dir
+    model_path = (
+        _resolve_dataset_path(model_path_value, global_cfg, "model_path")
+        if model_path_value
+        else model_dir
+    )
 
     prediction_sets = task.get("prediction_sets")
     if not prediction_sets:
         raise ConfigError("Prediction-only task must provide at least one prediction_sets entry.")
 
-    prediction_set_objs = _collect_prediction_sets({"prediction_sets": prediction_sets}, model_dir, global_cfg)
+    prediction_set_objs = _collect_prediction_sets(
+        {"prediction_sets": prediction_sets}, model_dir, global_cfg
+    )
     submit_flag = _should_submit(task, global_cfg)
     content = _render_prediction_only_script(
         job_name=job_name,
@@ -473,7 +501,9 @@ def _build_prediction_jobs(task: dict, global_cfg: GC, renderers: Renderers) -> 
         renderers=renderers,
     )
     filename = f"{job_slug}.sh"
-    return [JobDefinition(job_name=job_name, filename=filename, content=content, submit=submit_flag)]
+    return [
+        JobDefinition(job_name=job_name, filename=filename, content=content, submit=submit_flag)
+    ]
 
 
 def _should_submit(task: dict, global_cfg: BaseGlobalConfig) -> bool:
@@ -527,10 +557,12 @@ def _threshold_arguments(
 # ---------------------------------------------------------------------------
 
 
-def _render_prediction_blocks(prediction_sets: list[PredictionSet], global_cfg: BaseGlobalConfig, job_slug: str) -> str:
+def _render_prediction_blocks(
+    prediction_sets: list[PredictionSet], global_cfg: BaseGlobalConfig, job_slug: str
+) -> str:
     blocks: list[str] = []
     for pred_set in prediction_sets:
-        temp_csv = f'${{TEMP_DIR}}/{job_slug}_{pred_set.slug}.csv'
+        temp_csv = f"${{TEMP_DIR}}/{job_slug}_{pred_set.slug}.csv"
         preds_path = pred_set.preds_path
         preds_dir_cmd = f"mkdir -p $(dirname {shlex.quote(str(preds_path))})"
         cmd_lines = [
@@ -546,29 +578,27 @@ def _render_prediction_blocks(prediction_sets: list[PredictionSet], global_cfg: 
             min_value = format(pred_set.compound_min_screens, "g")
             cmd_lines[-1] += " \\"
             cmd_lines.append(f"  --compound-min-screens {min_value} \\")
-            cmd_lines.append(
-                f'  --compound-screens-column "{pred_set.compound_screens_column}"'
-            )
+            cmd_lines.append(f'  --compound-screens-column "{pred_set.compound_screens_column}"')
         prepare_cmd = "\n".join(cmd_lines)
 
         predict_lines = [
-            f'${{CHEMPROP_PREDICT}} \\',
+            f"${{CHEMPROP_PREDICT}} \\",
             f'  --test-path "{temp_csv}" \\',
             f'  --preds-path "{preds_path}" \\',
             '  --model-path "${MODEL_PATH}" \\',
-            '  --drop-extra-columns \\',
+            "  --drop-extra-columns \\",
             '  --smiles-columns "smiles" \\',
             f"  --num-workers {global_cfg.cpus}",
         ]
 
         block_lines = [
-            f'echo "[INFO] [$START] [$(date)] [$$] Preparing dataset \'{pred_set.name}\' for prediction"',
+            f"echo \"[INFO] [$START] [$(date)] [$$] Preparing dataset '{pred_set.name}' for prediction\"",
             "",
             prepare_cmd,
             "",
             preds_dir_cmd,
             "",
-            f'echo "[INFO] [$START] [$(date)] [$$] Running Chemprop prediction for \'{pred_set.name}\'"',
+            f"echo \"[INFO] [$START] [$(date)] [$$] Running Chemprop prediction for '{pred_set.name}'\"",
             "",
             "\n".join(predict_lines),
             "",
@@ -601,9 +631,16 @@ def _render_multilabel_script(
     keep_args = "\n".join(
         f'          --keep-column "{col}"' for col in keep_columns if col not in {"smiles", "split"}
     )
-    temp_parquet = f'${{TEMP_DIR}}/{job_slug}_multilabel_trimmed.parquet'
+    temp_parquet = f"${{TEMP_DIR}}/{job_slug}_multilabel_trimmed.parquet"
 
-    body_lines: list[str] = [header, "", env_block, "", f'MODEL_DIR="{model_dir}"', 'mkdir -p "${MODEL_DIR}"']
+    body_lines: list[str] = [
+        header,
+        "",
+        env_block,
+        "",
+        f'MODEL_DIR="{model_dir}"',
+        'mkdir -p "${MODEL_DIR}"',
+    ]
     body_lines.append(f'TRAINVAL_PATH="{trainval_path}"')
     body_lines.append(f'TEMP_PARQUET="{temp_parquet}"')
     body_lines.append("")
@@ -627,7 +664,7 @@ def _render_multilabel_script(
             "${CHEMPROP_TRAIN} \\",
             '  --data-path "${TEMP_PARQUET}" \\',
             '  --save-dir "${MODEL_DIR}" \\',
-            '  --task-type classification \\',
+            "  --task-type classification \\",
             f"  --ensemble-size {ensemble_size} \\",
             '  --smiles-columns "smiles" \\',
             '  --splits-column "split" \\',
@@ -689,7 +726,7 @@ def _render_regression_script(
 ) -> str:
     header = renderers.header(job_name, global_cfg)
     env_block = renderers.common_env(global_cfg, job_name)
-    temp_parquet = f'${{TEMP_DIR}}/{job_slug}_regression.parquet'
+    temp_parquet = f"${{TEMP_DIR}}/{job_slug}_regression.parquet"
     extra_prep_lines: list[str] = []
     if compound_min_screens is not None:
         min_value = format(compound_min_screens, "g")
@@ -796,7 +833,7 @@ def _render_threshold_script(
 ) -> str:
     header = renderers.header(job_name, global_cfg)
     env_block = renderers.common_env(global_cfg, job_name)
-    temp_parquet = f'${{TEMP_DIR}}/{job_slug}_threshold.parquet'
+    temp_parquet = f"${{TEMP_DIR}}/{job_slug}_threshold.parquet"
     extra_prep_lines: list[str] = []
     if threshold_args:
         for flag, value in threshold_args:
@@ -853,7 +890,7 @@ def _render_threshold_script(
         ]
         for metric in classification_metrics:
             train_cmd_lines.append(f'  --metrics "{metric}" \\')
-        train_cmd_lines.append("  --auto-class-weights \"balanced\" \\")
+        train_cmd_lines.append('  --auto-class-weights "balanced" \\')
         train_cmd_lines.append(f"  --pytorch-seed {seed} \\")
         train_cmd_lines.append(f"  --num-workers {global_cfg.cpus}")
 
@@ -954,12 +991,10 @@ def _parse_global_config(raw: dict, base_path: Path) -> GlobalConfig:
         python_executable=str(raw.get("python", "python")),
         epochs=int(raw.get("epochs", 50)),
         seed=int(raw.get("seed", 42)),
-        metrics_classification=[str(m) for m in raw.get(
-            "classification_metrics", ["prc", "roc", "accuracy", "f1"]
-        )],
-        metrics_regression=[str(m) for m in raw.get(
-            "regression_metrics", ["rmse", "mae", "r2"]
-        )],
+        metrics_classification=[
+            str(m) for m in raw.get("classification_metrics", ["prc", "roc", "accuracy", "f1"])
+        ],
+        metrics_regression=[str(m) for m in raw.get("regression_metrics", ["rmse", "mae", "r2"])],
         chemprop_train_cmd=str(raw.get("chemprop_train_cmd", "chemprop train")),
         chemprop_predict_cmd=str(raw.get("chemprop_predict_cmd", "chemprop predict")),
         submit=bool(raw.get("submit", True)),

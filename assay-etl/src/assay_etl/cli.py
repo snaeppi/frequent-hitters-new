@@ -4,19 +4,20 @@ from __future__ import annotations
 
 import httpx
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import List, Optional
 
 import typer
+from rich.console import Console
 from rich.progress import (
     BarColumn,
     Progress,
+    SpinnerColumn,
     TextColumn,
     TimeElapsedColumn,
     TimeRemainingColumn,
 )
 
-from .aggregation import aggregate_compounds
-from .ftp_download import download_assays
+from .download import download_assays
 from .meta_db import (
     export_metadata_to_csv,
     import_metadata_csv,
@@ -33,16 +34,17 @@ from .manual_annotation import (
     load_annotation_context,
 )
 
+console: Console = Console()
+
 PROGRESS_COLUMNS = (
+    SpinnerColumn(),
     TextColumn("[progress.description]{task.description}"),
     BarColumn(),
     TextColumn("{task.completed}/{task.total}"),
-    "[progress.percentage]{task.percentage:>3.0f}%",
-    "•",
     TimeElapsedColumn(),
-    "•",
     TimeRemainingColumn(),
 )
+PROGRESS_OPTS = {"console": console, "refresh_per_second": 0}
 
 app = typer.Typer(
     no_args_is_help=True,
@@ -80,6 +82,17 @@ def _resolve_aids(
     raise typer.BadParameter("Specify --aid, --from-pcassay, or --aids-file.")
 
 
+def _aggregated_path(base_dir: Path, aid: int) -> Path:
+    """Prefer the new naming (aid_<AID>.parquet), fall back to legacy suffix."""
+    preferred = base_dir / f"aid_{aid}.parquet"
+    legacy = base_dir / f"aid_{aid}_cid_agg.parquet"
+    if preferred.exists():
+        return preferred
+    if legacy.exists():
+        return legacy
+    return preferred
+
+
 @app.command("download-assays")
 def download_assays_command(
     aid: Optional[int] = typer.Option(
@@ -105,15 +118,25 @@ def download_assays_command(
     out_dir: Path = typer.Option(
         Path("data/assay_tables"),
         "--out-dir",
-        help="Directory for per-assay Parquet tables.",
+        help="Directory for aggregated per-assay Parquet tables (one row per compound).",
     ),
     force_download: bool = typer.Option(
         False,
         "--force-download/--no-force-download",
         help="Force re-download even if parquet exists.",
     ),
+    io_workers: int = typer.Option(
+        4,
+        "--io-workers",
+        help="Maximum concurrent downloads.",
+    ),
+    cpu_workers: int = typer.Option(
+        4,
+        "--cpu-workers",
+        help="Maximum concurrent processing workers.",
+    ),
 ) -> None:
-    """Download gzipped CSVs from PubChem and materialize as Parquet."""
+    """Download and aggregate assay tables from PubChem (one parquet per AID)."""
     aids = _resolve_aids(
         aid=aid,
         from_pcassay=from_pcassay,
@@ -124,84 +147,14 @@ def download_assays_command(
         typer.echo("No AIDs resolved.", err=True)
         raise typer.Exit(1)
     out_dir.mkdir(parents=True, exist_ok=True)
-    results = download_assays(aids=aids, cache_dir=out_dir, force_download=force_download)
+    results = download_assays(
+        aids=aids,
+        cache_dir=out_dir,
+        force_download=force_download,
+        io_workers=io_workers,
+        cpu_workers=cpu_workers,
+    )
     typer.echo(f"Downloaded/verified {len(results)} assays into {out_dir}")
-
-
-@app.command("aggregate-compounds")
-def aggregate_compounds_command(
-    aid: Optional[int] = typer.Option(
-        None,
-        "--aid",
-        help="Single AID to aggregate.",
-    ),
-    from_pcassay: bool = typer.Option(
-        False,
-        "--from-pcassay",
-        help="Aggregate all AIDs discovered from pcassay_result.txt.",
-    ),
-    aids_file: Optional[Path] = typer.Option(
-        None,
-        "--aids-file",
-        help="Optional file containing one AID per line.",
-    ),
-    pcassay_result: Path = typer.Option(
-        Path("data/pcassay_result.txt"),
-        "--pcassay-result",
-        help="Path to pcassay_result.txt catalog export.",
-    ),
-    raw_dir: Path = typer.Option(
-        Path("data/assay_tables"),
-        "--raw-dir",
-        help="Directory containing raw per-assay parquet tables.",
-    ),
-    out_dir: Path = typer.Option(
-        Path("outputs/aggregated"),
-        "--out-dir",
-        help="Directory for aggregated per-CID parquet tables.",
-    ),
-    force: bool = typer.Option(
-        False,
-        "--force/--no-force",
-        help="Recompute even if aggregated parquet already exists.",
-    ),
-) -> None:
-    """Aggregate assay tables to one row per CID."""
-
-    aids = _resolve_aids(
-        aid=aid,
-        from_pcassay=from_pcassay,
-        aids_file=aids_file,
-        pcassay_result=pcassay_result,
-    )
-    if not aids:
-        typer.echo("No AIDs resolved.", err=True)
-        raise typer.Exit(1)
-
-    out_dir.mkdir(parents=True, exist_ok=True)
-    skipped = 0
-    processed = 0
-
-    with Progress(*PROGRESS_COLUMNS) as progress:
-        task_id = progress.add_task("Aggregating assays", total=len(aids))
-
-        for a in aids:
-            input_parquet = raw_dir / f"aid_{a}.parquet"
-            output_parquet = out_dir / f"aid_{a}_cid_agg.parquet"
-
-            progress.update(task_id, description=f"Processing AID {a}")
-
-            if output_parquet.exists() and not force:
-                skipped += 1
-            else:
-                aggregate_compounds(aid=a, input_parquet=input_parquet, output_parquet=output_parquet)
-                processed += 1
-
-            progress.advance(task_id)
-
-        progress.update(task_id, description="[green]All assays processed")
-
-    typer.echo(f"Aggregated {processed} assays into {out_dir} (skipped {skipped} existing files)")
 
 
 @app.command("summarize-assays")
@@ -268,15 +221,11 @@ def select_column_command(
         "--start-aid",
         help="Optional minimum AID; skip anything below this when batching.",
     ),
-    raw_dir: Path = typer.Option(
+    assays_dir: Path = typer.Option(
         Path("data/assay_tables"),
-        "--raw-dir",
-        help="Directory containing raw per-assay parquet tables.",
-    ),
-    aggregated_dir: Path = typer.Option(
-        Path("outputs/aggregated"),
+        "--assays-dir",
         "--aggregated-dir",
-        help="Directory containing aggregated per-assay parquet tables.",
+        help="Directory containing aggregated per-assay parquet tables (aid_<AID>.parquet).",
     ),
     metadata_db: Path = typer.Option(
         Path("outputs/assay_metadata.sqlite"),
@@ -302,20 +251,22 @@ def select_column_command(
         typer.echo("No AIDs resolved.")
         return
 
-    with Progress(*PROGRESS_COLUMNS) as progress:
+    console.line()  # Spacer above progress bar
+    with Progress(*PROGRESS_COLUMNS, **PROGRESS_OPTS) as progress:
         task_id = progress.add_task("Selecting columns", total=len(aids))
         for current_aid in aids:
             progress.update(task_id, description=f"AID {current_aid}")
 
-            raw_path = raw_dir / f"aid_{current_aid}.parquet"
-            agg_path = aggregated_dir / f"aid_{current_aid}_cid_agg.parquet"
             try:
                 result = interactive_select_for_aid(
                     aid=current_aid,
-                    aggregated_parquet=agg_path,
-                    raw_parquet=raw_path,
+                    aggregated_parquet=_aggregated_path(assays_dir, current_aid),
                     metadata_db=metadata_db,
                 )
+            except FileNotFoundError as exc:
+                typer.echo(str(exc))
+                progress.advance(task_id)
+                continue
             except KeyboardInterrupt:
                 progress.stop()
                 typer.echo("\nStopping selection loop on user interrupt.")
@@ -329,6 +280,7 @@ def select_column_command(
 
             progress.advance(task_id)
         progress.update(task_id, description="[green]All selections processed")
+    console.line()  # Spacer below progress bar
 
 
 @app.command("compute-rscores")
@@ -339,9 +291,10 @@ def compute_rscores_command(
         help="SQLite metadata database containing selected columns and stats.",
     ),
     aggregated_dir: Path = typer.Option(
-        Path("outputs/aggregated"),
+        Path("data/assay_tables"),
         "--aggregated-dir",
-        help="Directory containing aggregated per-assay parquet tables.",
+        "--assays-dir",
+        help="Directory containing aggregated per-assay parquet tables (aid_<AID>.parquet).",
     ),
     out_parquet: Path = typer.Option(
         Path("outputs/assay_rscores.parquet"),
@@ -366,9 +319,10 @@ def update_selected_stats_command(
         help="Metadata SQLite DB containing selected columns (will be updated with stats).",
     ),
     aggregated_dir: Path = typer.Option(
-        Path("outputs/aggregated"),
+        Path("data/assay_tables"),
         "--aggregated-dir",
-        help="Directory containing aggregated per-assay parquet tables.",
+        "--assays-dir",
+        help="Directory containing aggregated per-assay parquet tables (aid_<AID>.parquet).",
     ),
 ) -> None:
     """Compute stats for already-selected columns and update metadata DB."""
@@ -379,11 +333,12 @@ def update_selected_stats_command(
         return
 
     updated = 0
-    with Progress(*PROGRESS_COLUMNS) as progress:
+    console.line()  # Spacer above progress bar
+    with Progress(*PROGRESS_COLUMNS, **PROGRESS_OPTS) as progress:
         task_id = progress.add_task("Updating stats", total=len(rows))
         for aid, selected_column in rows:
             progress.update(task_id, description=f"AID {aid}")
-            agg_path = aggregated_dir / f"aid_{aid}_cid_agg.parquet"
+            agg_path = _aggregated_path(aggregated_dir, aid)
             if not agg_path.exists():
                 typer.echo(f"[skip] Aggregated parquet missing for AID {aid}: {agg_path}")
                 progress.advance(task_id)
@@ -411,6 +366,7 @@ def update_selected_stats_command(
             updated += 1
             progress.advance(task_id)
         progress.update(task_id, description="[green]Stats update complete")
+    console.line()  # Spacer below progress bar
 
     typer.echo(f"Updated stats for {updated} assays in {metadata_db}")
 
@@ -520,7 +476,8 @@ def annotate_metadata_command(
             typer.echo("No assays require manual annotation.")
             return
 
-        with Progress(*PROGRESS_COLUMNS) as progress:
+        console.line()  # Spacer above progress bar
+        with Progress(*PROGRESS_COLUMNS, **PROGRESS_OPTS) as progress:
             task_id = progress.add_task("Annotating assays", total=len(contexts))
             for idx, ctx in enumerate(contexts, start=1):
                 progress.update(task_id, description=f"Annotating AID {ctx.aid}")
@@ -533,6 +490,7 @@ def annotate_metadata_command(
                 )
                 progress.advance(task_id)
             progress.update(task_id, description="[green]All annotations processed")
+        console.line()  # Spacer below progress bar
     finally:
         client.close()
 

@@ -12,7 +12,14 @@ import typer
 from rdkit import Chem, RDLogger
 from rdkit.Chem import Descriptors
 from rdkit.Chem.MolStandardize import rdMolStandardize
-from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn, TimeRemainingColumn
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
 
 # Suppress RDKit warnings
 RDLogger.logger().setLevel(RDLogger.CRITICAL)
@@ -20,13 +27,11 @@ RDLogger.logger().setLevel(RDLogger.CRITICAL)
 app = typer.Typer(no_args_is_help=True, help="Clean HTS data and split by assay format.")
 
 PROGRESS_COLUMNS = (
+    SpinnerColumn(),
     TextColumn("[progress.description]{task.description}"),
     BarColumn(),
     TextColumn("{task.completed}/{task.total}"),
-    "[progress.percentage]{task.percentage:>3.0f}%",
-    "•",
     TimeElapsedColumn(),
-    "•",
     TimeRemainingColumn(),
 )
 
@@ -141,8 +146,12 @@ def rename_cols(df: pl.DataFrame, smiles_col: str, assay_col: str, active_col: s
 
 @app.command("clean")
 def clean_split(
-    hts_file: Path = typer.Option(..., "--hts-file", help="Path to HTS data file (.csv or .parquet)."),
-    assay_props_file: Path = typer.Option(..., "--assay-props-file", help="Path to assay properties file (.csv or .parquet)."),
+    hts_file: Path = typer.Option(
+        ..., "--hts-file", help="Path to HTS data file (.csv or .parquet)."
+    ),
+    assay_props_file: Path = typer.Option(
+        ..., "--assay-props-file", help="Path to assay properties file (.csv or .parquet)."
+    ),
     id_to_smiles_file: Path | None = typer.Option(
         None,
         "--id-to-smiles-file",
@@ -152,9 +161,15 @@ def clean_split(
     smiles_col: str = typer.Option("smiles", "--smiles-col", help="Column name for SMILES."),
     assay_col: str = typer.Option("assay_id", "--assay-col", help="Column name for assay ID."),
     active_col: str = typer.Option("active", "--active-col", help="Column name for activity flag."),
-    assay_format_col: str = typer.Option("assay_format", "--assay-format-col", help="Column name for assay format."),
-    biochemical_format: str = typer.Option("biochemical", "--biochemical-format", help="Label for biochemical assays."),
-    cellular_format: str = typer.Option("cellular", "--cellular-format", help="Label for cellular assays."),
+    assay_format_col: str = typer.Option(
+        "assay_format", "--assay-format-col", help="Column name for assay format."
+    ),
+    biochemical_format: str = typer.Option(
+        "biochemical", "--biochemical-format", help="Label for biochemical assays."
+    ),
+    cellular_format: str = typer.Option(
+        "cellular", "--cellular-format", help="Label for cellular assays."
+    ),
     score_col: str | None = typer.Option(
         None,
         "--score-col",
@@ -165,8 +180,12 @@ def clean_split(
         "--score-threshold",
         help="Absolute threshold applied to --score-col to derive 'active'.",
     ),
-    biochemical_out: Path = typer.Option(..., "--biochemical-out", help="Output file for biochemical subset."),
-    cellular_out: Path = typer.Option(..., "--cellular-out", help="Output file for cellular subset."),
+    biochemical_out: Path = typer.Option(
+        ..., "--biochemical-out", help="Output file for biochemical subset."
+    ),
+    cellular_out: Path = typer.Option(
+        ..., "--cellular-out", help="Output file for cellular subset."
+    ),
     rename_columns: bool = typer.Option(
         False,
         "--rename-cols",

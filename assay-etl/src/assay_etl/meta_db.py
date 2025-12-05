@@ -154,8 +154,7 @@ def update_metadata_stats(
     try:
         # Ensure row exists
         conn.execute(
-            "INSERT INTO assay_metadata (aid) VALUES (?) "
-            "ON CONFLICT(aid) DO NOTHING",
+            "INSERT INTO assay_metadata (aid) VALUES (?) ON CONFLICT(aid) DO NOTHING",
             (aid,),
         )
         sql = """

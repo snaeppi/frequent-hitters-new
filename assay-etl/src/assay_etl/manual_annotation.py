@@ -16,7 +16,7 @@ from .assay_parser import AssayDescriptionRecord, parse_assay_description
 from .metadata import AssayMetadata, _format_from_labels
 from .meta_db import upsert_static_metadata
 
-console = Console()
+console: Console = Console()
 
 TARGET_CHOICES = {
     "1": "target-based",
@@ -39,9 +39,7 @@ class AnnotationContext:
     bioactivity_type: str | None
 
 
-def _fetch_assay_description_xml(
-    *, aid: int, client: httpx.Client
-) -> str:
+def _fetch_assay_description_xml(*, aid: int, client: httpx.Client) -> str:
     """Fetch assay description XML from PUG-REST."""
     url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/assay/aid/{aid}/description/XML"
     resp = client.get(url, timeout=60.0)
@@ -50,7 +48,7 @@ def _fetch_assay_description_xml(
 
 
 def _format_record_text(record: AssayDescriptionRecord) -> Text:
-    """Format description/protocol/comment into a single Text block for paging."""
+    """Format description/protocol/comment into a single Text block."""
     parts: list[str] = []
     if record.description:
         parts.append("Description:\n" + "\n\n".join(record.description))
@@ -107,7 +105,9 @@ def _prompt_annotation(
     return target, bio
 
 
-def _render_header(record: AssayDescriptionRecord, ctx: AnnotationContext, index: int, total: int) -> None:
+def _render_header(
+    record: AssayDescriptionRecord, ctx: AnnotationContext, index: int, total: int
+) -> None:
     """Print a compact header with name, URL, and selection context."""
     url = f"https://pubchem.ncbi.nlm.nih.gov/bioassay/{record.aid}"
     header = Text()
@@ -167,11 +167,7 @@ def load_annotation_context(
         if verbose:
             console.print(f"[yellow]Skipping AID {aid}: no valid selected_column.[/]")
         return None
-    if (
-        not include_annotated
-        and row["target_type"]
-        and row["bioactivity_type"]
-    ):
+    if not include_annotated and row["target_type"] and row["bioactivity_type"]:
         if verbose:
             console.print(f"[green]Skipping AID {aid}: already annotated.[/]")
         return None
@@ -222,11 +218,7 @@ def iter_annotation_contexts(
             aid_val = int(row["aid"])
             if start_aid is not None and aid_val < start_aid:
                 continue
-            if (
-                not include_annotated
-                and row["target_type"]
-                and row["bioactivity_type"]
-            ):
+            if not include_annotated and row["target_type"] and row["bioactivity_type"]:
                 continue
             contexts.append(_row_to_context(row))
     finally:
@@ -252,9 +244,9 @@ def annotate_metadata_manual(
         return False
 
     _render_header(record, context, index, total)
-    console.print("[dim]Press 'q' in the pager to return to the prompt.[/dim]")
-    with console.pager(styles=True):
-        console.print(_format_record_text(record))
+    console.rule("[bold]Assay Description[/bold]")
+    console.print(_format_record_text(record))
+    console.rule()
 
     annotation = _prompt_annotation(
         existing_target=context.target_type,

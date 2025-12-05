@@ -87,5 +87,3 @@ def iter_aids_from_pcassay(path: Path) -> Iterable[int]:
     """Yield AIDs from a pcassay_result.txt file."""
     records = load_pcassay_results(path)
     return records.keys()
-
-

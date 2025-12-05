@@ -55,13 +55,12 @@ The tool expects these inputs (already present in `minimal/data`):
 
 Typical flow for one or many assays:
 
-1. Download raw assay tables from PubChem (`download-assays`).
-2. Aggregate to one row per `PUBCHEM_CID` (`aggregate-compounds`).
-3. Build assay‑level metadata (`summarize-assays` → SQLite DB, optional CSV export).
-4. Manually select a primary screening column (`select-column`)  
+1. Download and aggregate assay tables from PubChem (`download-assays`) – one parquet per AID with one row per `PUBCHEM_CID`.
+2. Build assay‑level metadata (`summarize-assays` → SQLite DB, optional CSV export).
+3. Manually select a primary screening column (`select-column`)  
    or pre-fill `selected_column` in the DB (via `import-metadata-csv`) and then compute stats (`update-selected-stats`).
-5. Optionally, run manual annotation to fill in missing `target_type` / `bioactivity_type` (`annotate-metadata`) using assay descriptions and direct PubChem links.
-6. Compute r‑scores and export a combined parquet (`compute-rscores`).
+4. Optionally, run manual annotation to fill in missing `target_type` / `bioactivity_type` (`annotate-metadata`) using assay descriptions and direct PubChem links.
+5. Compute r‑scores and export a combined parquet (`compute-rscores`).
 
 All commands are subcommands of `assay-etl`.
 
@@ -71,7 +70,7 @@ All commands are subcommands of `assay-etl`.
 
 ### 1. Download assay tables – `download-assays`
 
-Fetches compressed CSVs from PubChem and materializes them as Parquet.
+Fetches compressed CSVs from PubChem, infers types, aggregates to one row per `PUBCHEM_CID`, and writes one Parquet per AID (atomic writes).
 
 ```bash
 assay-etl download-assays [OPTIONS]
@@ -91,14 +90,20 @@ Key options:
 - `--pcassay-result PATH` (default `data/pcassay_result.txt`)
 
 - `--out-dir PATH` (default `data/assay_tables`)  
-  Where `aid_<AID>.parquet` will be written.
+  Where aggregated `aid_<AID>.parquet` files will be written.
 
 - `--force-download/--no-force-download`  
   Re‑download even if the parquet already exists.
 
+- `--io-workers INT` (default 4)  
+  Concurrent download threads.
+
+- `--cpu-workers INT` (default 4)  
+  Concurrent processing workers for CSV → aggregated parquet.
+
 Output:
 
-- `data/assay_tables/aid_<AID>.parquet` – raw assay table for each AID.
+- `data/assay_tables/aid_<AID>.parquet` – aggregated per-assay table (one row per compound).
 
 Example (single AID):
 
@@ -106,40 +111,7 @@ Example (single AID):
 assay-etl download-assays --aid 588334
 ```
 
-### 2. Aggregate to one row per compound – `aggregate-compounds`
-
-Aggregates each assay table to one row per `PUBCHEM_CID` using median (numeric)  
-and mode (categorical).
-
-```bash
-assay-etl aggregate-compounds [OPTIONS]
-```
-
-Key options:
-
-- `--aid AID`  
-  Aggregate a single AID.
-
-- `--from-pcassay` / `--aids-file PATH` / `--pcassay-result PATH`  
-  Same semantics as `download-assays`.
-
-- `--raw-dir PATH` (default `data/assay_tables`)  
-  Location of `aid_<AID>.parquet` input files.
-
-- `--out-dir PATH` (default `outputs/aggregated`)  
-  Destination for `aid_<AID>_cid_agg.parquet`.
-
-Output:
-
-- `outputs/aggregated/aid_<AID>_cid_agg.parquet` – one row per compound.
-
-Example:
-
-```bash
-assay-etl aggregate-compounds --aid 588334
-```
-
-### 3. Build assay metadata – `summarize-assays`
+### 2. Build assay metadata – `summarize-assays`
 
 Creates or refreshes assay metadata in the SQLite DB, including Hit Dexter labels,  
 and optionally exports a CSV snapshot.
@@ -179,7 +151,7 @@ Example:
 assay-etl summarize-assays
 ```
 
-### 4. Interactive column selection – `select-column`
+### 3. Interactive column selection – `select-column`
 
 Interactive CLI to choose the primary screening column for one or many assays.  
 Use `--aid` for a single assay, or `--from-pcassay` / `--aids-file` to iterate with a progress bar.
@@ -199,18 +171,15 @@ Key options:
 - `--start-aid INT`  
   Skip any AIDs below this numeric value when batching.
 
-- `--raw-dir PATH` (default `data/assay_tables`)  
-  Directory containing `aid_<AID>.parquet`.
-
-- `--aggregated-dir PATH` (default `outputs/aggregated`)  
-  Directory with `aid_<AID>_cid_agg.parquet`. If missing, it will be created on the fly from `raw-dir`.
+- `--assays-dir PATH` (default `data/assay_tables`)  
+  Directory containing aggregated `aid_<AID>.parquet` files (output of `download-assays`). `--aggregated-dir` is an alias.
 
 - `--metadata-db PATH` (default `outputs/assay_metadata.sqlite`)  
   Metadata SQLite DB to update with `selected_column` and stats.
 
 Behavior:
 
-- Ensures an aggregated parquet exists for the AID.
+- Loads the aggregated parquet for the AID (one row per compound).
 - Detects candidate numeric columns (drops most `PUBCHEM_*` metadata).
 - Detects replicate groups like `REPLICATE_A_...`, `REPLICATE_B_...` and writes mean columns such as `_ACTIVITY_SCORE_12.5uM_(%)_mean`.
 - For each candidate column, computes:
@@ -240,7 +209,7 @@ Example (batch):
 assay-etl select-column --from-pcassay --start-aid 500000
 ```
 
-### 5. Compute stats for existing selections – `update-selected-stats`
+### 4. Compute stats for existing selections – `update-selected-stats`
 
 Use this when `selected_column` has been set manually (e.g., joined from an older pipeline)  
 and you want to compute median/MAD and hit statistics for those columns.
@@ -254,8 +223,8 @@ Key options:
 - `--metadata-db PATH` (default `outputs/assay_metadata.sqlite`)  
   Must contain `aid` and `selected_column`.
 
-- `--aggregated-dir PATH` (default `outputs/aggregated`)  
-  Location of `aid_<AID>_cid_agg.parquet`.
+- `--aggregated-dir PATH` (default `data/assay_tables`)  
+  Location of aggregated `aid_<AID>.parquet` tables (`--assays-dir` alias).
 
 Behavior:
 
@@ -270,7 +239,7 @@ Behavior:
 
 This is the quickest way to “rehydrate” stats after manually populating `selected_column`.
 
-### 6. Compute r‑scores and export – `compute-rscores`
+### 5. Compute r‑scores and export – `compute-rscores`
 
 Computes r‑scores for every assay with a selected column and writes a single parquet.
 
@@ -283,8 +252,8 @@ Key options:
 - `--metadata-db PATH` (default `outputs/assay_metadata.sqlite`)  
   Must contain `aid`, `selected_column`, and optionally `median`, `mad`.
 
-- `--aggregated-dir PATH` (default `outputs/aggregated`)  
-  Directory with `aid_<AID>_cid_agg.parquet`.
+- `--aggregated-dir PATH` (default `data/assay_tables`)  
+  Directory with aggregated `aid_<AID>.parquet` files (`--assays-dir` alias).
 
 - `--out PATH` (default `outputs/assay_rscores.parquet`)
 
@@ -304,7 +273,7 @@ Example:
 assay-etl compute-rscores
 ```
 
-### 7. Import existing metadata CSV – `import-metadata-csv`
+### 6. Import existing metadata CSV – `import-metadata-csv`
 
 One-time migration helper to seed the SQLite metadata DB from an existing CSV  
 (e.g., from an older run of the pipeline).
@@ -323,7 +292,7 @@ Arguments / options:
 Use this once to migrate your existing `assay_metadata.csv` into SQLite before  
 switching to the DB-based workflow.
 
-### 8. Export metadata snapshot – `export-metadata-csv`
+### 7. Export metadata snapshot – `export-metadata-csv`
 
 Export the current contents of the SQLite metadata table to a CSV for quick inspection.
 
@@ -341,7 +310,7 @@ Key options:
 Use this after running `select-column` or `update-selected-stats` if you want an updated  
 `assay_metadata.csv` for manual review or external analysis.
 
-### 9. Manual metadata annotation – `annotate-metadata`
+### 8. Manual metadata annotation – `annotate-metadata`
 
 Interactively assign `target_type` / `bioactivity_type` for assays with a selected column but no existing annotation (and not marked ineligible). Descriptions are shown in a pager so you can scroll before choosing labels.
 
@@ -392,16 +361,13 @@ Below is a concrete sequence for one assay (e.g. AID 588334):
 ```bash
 cd minimal
 
-# 1. Download raw assay table
+# 1. Download aggregated assay table
 assay-etl download-assays --aid 588334
 
-# 2. Aggregate to one row per compound
-assay-etl aggregate-compounds --aid 588334
-
-# 3. Build or refresh metadata
+# 2. Build or refresh metadata
 assay-etl summarize-assays
 
-# 4. Interactively select a column for this assay
+# 3. Interactively select a column for this assay
 assay-etl select-column --aid 588334
 
 # (Optional) Manually annotate target/bioactivity labels using the description pager
@@ -409,7 +375,7 @@ assay-etl annotate-metadata --aid 588334
 
 # (Optionally repeat select-column / annotate-metadata for other AIDs.)
 
-# 5. Compute r-scores for all assays with selected columns
+# 4. Compute r-scores for all assays with selected columns
 assay-etl compute-rscores
 ```
 

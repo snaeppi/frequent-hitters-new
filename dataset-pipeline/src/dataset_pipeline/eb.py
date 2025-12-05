@@ -185,7 +185,7 @@ def build_compound_metadata(
     Returns a tuple of:
       - filtered compound DataFrame (only reliability-passing compounds)
       - full compound DataFrame annotated with EB score and a `passes_reliability_filter` flag
-      - diagnostics dictionary for manifest logging
+      - diagnostics dictionary for downstream logging
     """
     if min_screens_per_compound < 1:
         raise ValueError("min_screens_per_compound must be >= 1.")

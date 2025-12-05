@@ -19,15 +19,21 @@ uge_app = typer.Typer(
 
 
 @uge_app.callback()
-def _main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug logging.")) -> None:
+def _main(
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug logging."),
+) -> None:
     _setup_logging(verbose)
 
 
 @uge_app.command("submit-jobs")
 def submit_jobs(
     config_path: Path = typer.Option(..., "--config", help="Path to the submission YAML file."),
-    output_dir: Path = typer.Option(..., "--output-dir", help="Directory for generated shell scripts."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Generate scripts without invoking qsub."),
+    output_dir: Path = typer.Option(
+        ..., "--output-dir", help="Directory for generated shell scripts."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Generate scripts without invoking qsub."
+    ),
     submit_override: bool | None = typer.Option(
         None,
         "--submit/--no-submit",

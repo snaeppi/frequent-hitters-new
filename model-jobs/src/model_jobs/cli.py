@@ -11,8 +11,9 @@ import typer
 from rich.progress import (
     BarColumn,
     Progress,
-    TextColumn,
+    SpinnerColumn,
     TaskID,
+    TextColumn,
     TimeElapsedColumn,
     TimeRemainingColumn,
 )
@@ -33,13 +34,11 @@ app = typer.Typer(
 )
 
 PROGRESS_COLUMNS = (
+    SpinnerColumn(),
     TextColumn("[progress.description]{task.description}"),
     BarColumn(),
     TextColumn("{task.completed}/{task.total}"),
-    "[progress.percentage]{task.percentage:>3.0f}%",
-    "•",
     TimeElapsedColumn(),
-    "•",
     TimeRemainingColumn(),
 )
 
@@ -106,7 +105,9 @@ def _parse_filter_value(value: str) -> object:
 
 
 @app.callback()
-def _main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug logging.")) -> None:
+def _main(
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug logging."),
+) -> None:
     _setup_logging(verbose)
 
 
@@ -114,8 +115,12 @@ def _main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable de
 def prepare_regression(
     input_path: Path = typer.Option(..., "--input", help="Source Parquet file."),
     output_path: Path = typer.Option(..., "--output", help="Path to the output Parquet file."),
-    smiles_column: str = typer.Option("smiles", "--smiles-column", help="Column containing SMILES strings."),
-    split_column: str = typer.Option("split", "--split-column", help="Column containing split assignments."),
+    smiles_column: str = typer.Option(
+        "smiles", "--smiles-column", help="Column containing SMILES strings."
+    ),
+    split_column: str = typer.Option(
+        "split", "--split-column", help="Column containing split assignments."
+    ),
     target_column: str = typer.Option("score", "--target-column", help="Regression target column."),
     compound_min_screens: float | None = typer.Option(
         None,
@@ -146,12 +151,24 @@ def prepare_regression(
 def prepare_threshold_classifier(
     input_path: Path = typer.Option(..., "--input", help="Source Parquet file."),
     output_path: Path = typer.Option(..., "--output", help="Path to the output Parquet file."),
-    smiles_column: str = typer.Option("smiles", "--smiles-column", help="Column containing SMILES strings."),
-    split_column: str = typer.Option("split", "--split-column", help="Column containing split assignments."),
-    target_column: str = typer.Option("target", "--target-column", help="Column containing the discrete label."),
-    metric_column: str = typer.Option("score", "--metric-column", help="Continuous column to derive labels."),
-    lower_threshold: float | None = typer.Option(None, "--lower-threshold", help="Absolute lower threshold."),
-    upper_threshold: float | None = typer.Option(None, "--upper-threshold", help="Absolute upper threshold."),
+    smiles_column: str = typer.Option(
+        "smiles", "--smiles-column", help="Column containing SMILES strings."
+    ),
+    split_column: str = typer.Option(
+        "split", "--split-column", help="Column containing split assignments."
+    ),
+    target_column: str = typer.Option(
+        "target", "--target-column", help="Column containing the discrete label."
+    ),
+    metric_column: str = typer.Option(
+        "score", "--metric-column", help="Continuous column to derive labels."
+    ),
+    lower_threshold: float | None = typer.Option(
+        None, "--lower-threshold", help="Absolute lower threshold."
+    ),
+    upper_threshold: float | None = typer.Option(
+        None, "--upper-threshold", help="Absolute upper threshold."
+    ),
     thresholds_json: Path | None = typer.Option(
         None,
         "--thresholds-json",
@@ -210,7 +227,9 @@ def prepare_threshold_classifier(
 def prepare_smiles_csv(
     input_path: Path = typer.Option(..., "--input", help="Source Parquet file."),
     output_path: Path = typer.Option(..., "--output", help="Path to the output CSV file."),
-    smiles_column: str = typer.Option("smiles", "--smiles-column", help="Column containing SMILES strings."),
+    smiles_column: str = typer.Option(
+        "smiles", "--smiles-column", help="Column containing SMILES strings."
+    ),
     filters: list[str] = typer.Option(
         [],
         "--filter",
@@ -286,8 +305,12 @@ def trim_columns(
 @app.command("submit-jobs")
 def submit_jobs(
     config_path: Path = typer.Option(..., "--config", help="Path to the submission YAML file."),
-    output_dir: Path = typer.Option(..., "--output-dir", help="Directory for generated shell scripts."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Generate scripts without executing them."),
+    output_dir: Path = typer.Option(
+        ..., "--output-dir", help="Directory for generated shell scripts."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Generate scripts without executing them."
+    ),
     submit_override: bool | None = typer.Option(
         None,
         "--submit/--no-submit",

@@ -75,13 +75,9 @@ def parse_assay_description(xml_payload: str) -> AssayDescriptionRecord:
     activity_node = desc_node.find(
         "pc:PC-AssayDescription_activity-outcome-method", namespaces=PC_NS
     )
-    activity_outcome_method = (
-        activity_node.get("value") if activity_node is not None else None
-    )
+    activity_outcome_method = activity_node.get("value") if activity_node is not None else None
 
-    project_node = desc_node.find(
-        "pc:PC-AssayDescription_project-category", namespaces=PC_NS
-    )
+    project_node = desc_node.find("pc:PC-AssayDescription_project-category", namespaces=PC_NS)
     project_category = project_node.get("value") if project_node is not None else None
 
     return AssayDescriptionRecord(
@@ -95,4 +91,3 @@ def parse_assay_description(xml_payload: str) -> AssayDescriptionRecord:
         project_category=project_category,
         raw_xml=xml_payload,
     )
-

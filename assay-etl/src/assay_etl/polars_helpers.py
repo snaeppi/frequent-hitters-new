@@ -34,4 +34,3 @@ def numeric_expr(column: str, dtype: pl.DataType | None) -> pl.Expr:
     if not is_numeric_dtype(dtype):
         expr = expr.cast(pl.Float64, strict=False)
     return expr
-

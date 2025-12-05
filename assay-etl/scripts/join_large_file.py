@@ -34,10 +34,7 @@ def _parse_args() -> argparse.Namespace:
         "--output",
         type=Path,
         default=None,
-        help=(
-            "Destination path for the reassembled file. "
-            "Defaults to the prefix path."
-        ),
+        help=("Destination path for the reassembled file. Defaults to the prefix path."),
     )
     parser.add_argument(
         "--force",
@@ -54,8 +51,7 @@ def join_file(prefix: Path, *, output: Path, force: bool) -> int:
 
     if output.exists() and not force:
         raise SystemExit(
-            f"Refusing to overwrite existing file: {output}. "
-            f"Pass --force to overwrite."
+            f"Refusing to overwrite existing file: {output}. Pass --force to overwrite."
         )
 
     output.parent.mkdir(parents=True, exist_ok=True)

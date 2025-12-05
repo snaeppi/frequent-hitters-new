@@ -53,8 +53,7 @@ def split_file(path: Path, *, chunk_size_bytes: int, output_dir: Path, force: bo
     total_size = path.stat().st_size
     if total_size <= chunk_size_bytes:
         raise SystemExit(
-            f"Input file is only {total_size} bytes; "
-            f"use a smaller chunk size or skip splitting."
+            f"Input file is only {total_size} bytes; use a smaller chunk size or skip splitting."
         )
 
     part_index = 1
@@ -69,8 +68,7 @@ def split_file(path: Path, *, chunk_size_bytes: int, output_dir: Path, force: bo
 
             if part_path.exists() and not force:
                 raise SystemExit(
-                    f"Refusing to overwrite existing file: {part_path}. "
-                    f"Pass --force to overwrite."
+                    f"Refusing to overwrite existing file: {part_path}. Pass --force to overwrite."
                 )
 
             with part_path.open("wb") as dst:

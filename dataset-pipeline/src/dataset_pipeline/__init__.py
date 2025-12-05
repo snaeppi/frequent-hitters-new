@@ -10,5 +10,4 @@ __all__ = [
     "split",
     "export",
     "viz",
-    "manifest",
 ]

@@ -67,7 +67,11 @@ def _parse_global_config(raw: dict, base_path: Path) -> GlobalConfig:
 
     email = str(raw.get("email", ""))
     logs_raw = raw.get("logs_dir")
-    logs_dir = _resolve_path(logs_raw, base_path) if logs_raw is not None else (base_path / "logs").resolve()
+    logs_dir = (
+        _resolve_path(logs_raw, base_path)
+        if logs_raw is not None
+        else (base_path / "logs").resolve()
+    )
 
     return GlobalConfig(
         email=email,
@@ -87,12 +91,10 @@ def _parse_global_config(raw: dict, base_path: Path) -> GlobalConfig:
         notify_events=str(raw.get("notify_events", "bea")),
         email_notifications=bool(raw.get("email_notifications", True)),
         gpu_map_script=str(raw.get("gpu_map_script")) if raw.get("gpu_map_script") else None,
-        metrics_classification=[str(m) for m in raw.get(
-            "classification_metrics", ["prc", "roc", "accuracy", "f1"]
-        )],
-        metrics_regression=[str(m) for m in raw.get(
-            "regression_metrics", ["rmse", "mae", "r2"]
-        )],
+        metrics_classification=[
+            str(m) for m in raw.get("classification_metrics", ["prc", "roc", "accuracy", "f1"])
+        ],
+        metrics_regression=[str(m) for m in raw.get("regression_metrics", ["rmse", "mae", "r2"])],
         chemprop_train_cmd=str(raw.get("chemprop_train_cmd", "chemprop train")),
         chemprop_predict_cmd=str(raw.get("chemprop_predict_cmd", "chemprop predict")),
         submit=bool(raw.get("submit", True)),
@@ -144,7 +146,7 @@ def _render_common_env(global_cfg: GlobalConfig, job_name: str) -> str:
     lines = _common_env_base_lines(global_cfg, job_name)
     if global_cfg.gpu_cards > 0 and global_cfg.gpu_map_script:
         lines.append("")
-        lines.append(f'export CUDA_VISIBLE_DEVICES=$({global_cfg.gpu_map_script})')
+        lines.append(f"export CUDA_VISIBLE_DEVICES=$({global_cfg.gpu_map_script})")
         lines.append('echo "[INFO] [$START] [$(date)] [$$] Selected GPUs: ${CUDA_VISIBLE_DEVICES}"')
     _append_conda_and_binaries(lines, global_cfg)
     return "\n".join(lines)
