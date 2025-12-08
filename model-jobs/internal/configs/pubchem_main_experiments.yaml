@@ -16,17 +16,14 @@ global:
   memory: 20G
   runtime: 100000
   gpu_cards: 1
+  seed: 1337
   submit: true
   datasets:
-    bio_all_reg: /home/naeppsa1/fh-experiments/final/data/processed/pubchem_rscore/biochemical/biochemical_regression_trainval.parquet
-    bio_all_mt: /home/naeppsa1/fh-experiments/final/data/processed/pubchem_rscore/biochemical/biochemical_multilabel_trainval.parquet
-    bio_all_cal: /home/naeppsa1/fh-experiments/final/data/processed/pubchem_rscore/biochemical/biochemical_calibration.parquet
-    bio_all_test: /home/naeppsa1/fh-experiments/final/data/processed/pubchem_rscore/biochemical/biochemical_test.parquet
+    bio_all_reg: /home/naeppsa1/fh-experiments/final/data/processed/pubchem_rscore/biochemical/biochemical_regression.parquet
+    bio_all_mt: /home/naeppsa1/fh-experiments/final/data/processed/pubchem_rscore/biochemical/biochemical_multilabel.parquet
     bio_all_thresholds: /home/naeppsa1/fh-experiments/final/data/processed/pubchem_rscore/biochemical/biochemical_thresholds.json
-    cell_all_reg: /home/naeppsa1/fh-experiments/final/data/processed/pubchem_rscore/cellular/cellular_regression_trainval.parquet
-    cell_all_mt: /home/naeppsa1/fh-experiments/final/data/processed/pubchem_rscore/cellular/cellular_multilabel_trainval.parquet
-    cell_all_cal: /home/naeppsa1/fh-experiments/final/data/processed/pubchem_rscore/cellular/cellular_calibration.parquet
-    cell_all_test: /home/naeppsa1/fh-experiments/final/data/processed/pubchem_rscore/cellular/cellular_test.parquet
+    cell_all_reg: /home/naeppsa1/fh-experiments/final/data/processed/pubchem_rscore/cellular/cellular_regression.parquet
+    cell_all_mt: /home/naeppsa1/fh-experiments/final/data/processed/pubchem_rscore/cellular/cellular_multilabel.parquet
     cell_all_thresholds: /home/naeppsa1/fh-experiments/final/data/processed/pubchem_rscore/cellular/cellular_thresholds.json
 
 tasks:

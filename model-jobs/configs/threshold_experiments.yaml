@@ -3,26 +3,23 @@ global:
   models_dir: /path/to/models
   temp_dir: /path/to/temp
   cpus: 4
+  seed: 1337
   submit: false
   datasets:
-    bio_all_reg: /path/to/processed/all/biochemical_regression_trainval.parquet
-    bio_all_cal: /path/to/processed/all/biochemical_calibration.parquet
-    bio_all_test: /path/to/processed/all/biochemical_test.parquet
+    bio_all_reg: /path/to/processed/all/biochemical_regression.parquet
     bio_all_thresholds: /path/to/processed/all/biochemical_thresholds.json
 
 tasks:
   - type: threshold
     job_name: thr_bio_all_min20
     trainval_path: bio_all_reg
-    calibration_path: bio_all_cal
-    test_path: bio_all_test
     thresholds_json: bio_all_thresholds
-    metric_column: score
+    metric_column: target
     target_column: target
     compound_min_screens: 20
     compound_screens_column: screens
-    predict_calibration: true
     predict_test: true
+    split_seed: 1337
     thresholds:
       - suffix: p50
         lower_percentile: 50
@@ -46,15 +43,13 @@ tasks:
   - type: threshold
     job_name: thr_bio_all_min50
     trainval_path: bio_all_reg
-    calibration_path: bio_all_cal
-    test_path: bio_all_test
     thresholds_json: bio_all_thresholds
-    metric_column: score
+    metric_column: target
     target_column: target
     compound_min_screens: 50
     compound_screens_column: screens
-    predict_calibration: true
     predict_test: true
+    split_seed: 1337
     thresholds:
       - suffix: p50
         lower_percentile: 50

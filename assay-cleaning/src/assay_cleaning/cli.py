@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Clean HTS data using Hit Dexter 3–style curation and split by assay format."""
+"""Clean HTS data using Hit Dexter 3-style curation and split by assay format."""
 
 from __future__ import annotations
 
+import json
 import logging
+import multiprocessing
 from pathlib import Path
-from typing import Optional, Set
+from typing import Optional
 
 import polars as pl
 import typer
@@ -35,26 +37,15 @@ PROGRESS_COLUMNS = (
     TimeRemainingColumn(),
 )
 
-
-# Elements allowed per Hit Dexter 3 methodology
-ALLOWED_ATOMS: Set[int] = {
-    1,  # H
-    5,  # B
-    6,  # C
-    7,  # N
-    8,  # O
-    9,  # F
-    14,  # Si
-    15,  # P
-    16,  # S
-    17,  # Cl
-    34,  # Se
-    35,  # Br
-    53,  # I
-}
-
+# Configuration Constants
 MIN_MW = 180.0
 MAX_MW = 900.0
+
+# SMARTS pattern for any atom NOT in the allowed list (Hit Dexter 3 allowed set)
+# Allowed: H(1), B(5), C(6), N(7), O(8), F(9), Si(14), P(15), S(16), Cl(17), Se(34), Br(35), I(53)
+FORBIDDEN_ATOM_SMARTS = (
+    "[!#1&!#5&!#6&!#7&!#8&!#9&!#14&!#15&!#16&!#17&!#34&!#35&!#53]"
+)
 
 
 def _setup_logger(log_file: Path | None) -> logging.Logger:
@@ -72,45 +63,93 @@ def _setup_logger(log_file: Path | None) -> logging.Logger:
 
 
 class ChemicalProcessor:
-    def __init__(self) -> None:
+    """Stateful processor to hold RDKit objects and pre-compiled patterns."""
+
+    def __init__(self, skip_tautomers: bool = False) -> None:
         self.uncharger = rdMolStandardize.Uncharger()
         self.fragment_chooser = rdMolStandardize.LargestFragmentChooser()
-        self.tautomer_enumerator = rdMolStandardize.TautomerEnumerator()
+        self.skip_tautomers = skip_tautomers
 
-    def process_smiles(self, smi: Optional[str]) -> Optional[str]:
-        """Apply neutralisation, desalting, tautomer canonicalisation, and filters."""
-        if smi is None:
-            return None
+        # Only initialize the enumerator if we intend to use it
+        if not self.skip_tautomers:
+            self.tautomer_enumerator = rdMolStandardize.TautomerEnumerator()
+
+        # Compile SMARTS once per worker
+        self.forbidden_pattern = Chem.MolFromSmarts(FORBIDDEN_ATOM_SMARTS)
+
+    def process_smiles(self, smi: str | None) -> tuple[str | None, str]:
+        """Apply filters and standardization in the most efficient order."""
+        if not smi:
+            return None, "missing_smiles"
 
         try:
             mol = Chem.MolFromSmiles(smi)
-            if mol is None:
-                return None
+        except Exception:
+            return None, "parse_exception"
 
+        if mol is None:
+            return None, "invalid_smiles"
+
+        try:
             mol = self.uncharger.uncharge(mol)
             mol = self.fragment_chooser.choose(mol)
             mol = self.uncharger.uncharge(mol)
-            mol = self.tautomer_enumerator.Canonicalize(mol)
-            if mol is None:
-                return None
-
-            mw = Descriptors.ExactMolWt(mol)  # type: ignore[attr-defined]
-            if not (MIN_MW <= mw <= MAX_MW):
-                return None
-
-            for atom in mol.GetAtoms():
-                if atom.GetAtomicNum() not in ALLOWED_ATOMS:
-                    return None
-
-            canonical = Chem.MolToSmiles(mol, canonical=True, isomericSmiles=False)
-            try:
-                if Chem.MolFromSmiles(canonical) is None:
-                    return None
-            except Exception:
-                return None
-            return canonical
         except Exception:
-            return None
+            return None, "uncharger_error"
+
+        try:
+            mw = Descriptors.ExactMolWt(mol)
+        except Exception:
+            return None, "mw_compute_error"
+
+        if not (MIN_MW <= mw <= MAX_MW):
+            return None, "molecular_weight_filter"
+
+        try:
+            if mol.HasSubstructMatch(self.forbidden_pattern):
+                return None, "forbidden_atom"
+        except Exception:
+            return None, "atom_filter_error"
+
+        if not self.skip_tautomers:
+            try:
+                mol = self.tautomer_enumerator.Canonicalize(mol)
+            except Exception:
+                return None, "tautomer_error"
+
+            if mol is None:
+                return None, "tautomer_error"
+
+        try:
+            canonical = Chem.MolToSmiles(mol, canonical=True, isomericSmiles=False)
+        except Exception:
+            return None, "canonicalization_error"
+
+        if not canonical:
+            return None, "canonicalization_error"
+
+        try:
+            if Chem.MolFromSmiles(canonical) is None:
+                return None, "canonical_validation_failed"
+        except Exception:
+            return None, "canonical_validation_failed"
+
+        return canonical, "retained"
+
+
+# Global variable to hold the processor instance in each worker process
+_worker_processor: Optional[ChemicalProcessor] = None
+
+def _init_worker(skip_tautomers: bool) -> None:
+    """Initialize the RDKit processor once per worker process."""
+    global _worker_processor
+    _worker_processor = ChemicalProcessor(skip_tautomers=skip_tautomers)
+
+def _process_wrapper(smi: str) -> tuple[Optional[str], str]:
+    """Lightweight wrapper to invoke the global processor."""
+    if _worker_processor:
+        return _worker_processor.process_smiles(smi)
+    return None, "missing_processor"
 
 
 def read_table(path: Path) -> pl.DataFrame:
@@ -119,6 +158,15 @@ def read_table(path: Path) -> pl.DataFrame:
         return pl.read_csv(path)
     if ext == ".parquet":
         return pl.read_parquet(path)
+    raise ValueError(f"Unsupported input extension '{ext}'. Use .csv or .parquet")
+
+
+def scan_table(path: Path) -> pl.LazyFrame:
+    ext = path.suffix.lower()
+    if ext == ".csv":
+        return pl.scan_csv(path)
+    if ext == ".parquet":
+        return pl.scan_parquet(path)
     raise ValueError(f"Unsupported input extension '{ext}'. Use .csv or .parquet")
 
 
@@ -132,7 +180,23 @@ def write_table(df: pl.DataFrame, path: Path) -> None:
         raise ValueError(f"Unsupported output extension '{ext}'. Use .csv or .parquet")
 
 
-def rename_cols(df: pl.DataFrame, smiles_col: str, assay_col: str, active_col: str) -> pl.DataFrame:
+def sink_table(df: pl.DataFrame | pl.LazyFrame, path: Path) -> None:
+    ext = path.suffix.lower()
+    if isinstance(df, pl.LazyFrame):
+        if ext == ".csv":
+            df.sink_csv(path)
+        elif ext == ".parquet":
+            df.sink_parquet(path)
+        else:
+            raise ValueError(f"Unsupported output extension '{ext}'. Use .csv or .parquet")
+        return
+
+    write_table(df, path)
+
+
+def rename_cols(
+    df: pl.DataFrame | pl.LazyFrame, smiles_col: str, assay_col: str, active_col: str
+) -> pl.DataFrame | pl.LazyFrame:
     mapping = {
         smiles_col: "smiles",
         assay_col: "assay_id",
@@ -146,151 +210,201 @@ def rename_cols(df: pl.DataFrame, smiles_col: str, assay_col: str, active_col: s
 
 @app.command("clean")
 def clean_split(
-    hts_file: Path = typer.Option(
-        ..., "--hts-file", help="Path to HTS data file (.csv or .parquet)."
-    ),
-    assay_props_file: Path = typer.Option(
-        ..., "--assay-props-file", help="Path to assay properties file (.csv or .parquet)."
-    ),
-    id_to_smiles_file: Path | None = typer.Option(
-        None,
-        "--id-to-smiles-file",
-        help="Optional path to ID-to-SMILES mapping file.",
-    ),
-    id_col: str = typer.Option("compound_id", "--id-col", help="Column name for compound ID."),
-    smiles_col: str = typer.Option("smiles", "--smiles-col", help="Column name for SMILES."),
-    assay_col: str = typer.Option("assay_id", "--assay-col", help="Column name for assay ID."),
-    active_col: str = typer.Option("active", "--active-col", help="Column name for activity flag."),
-    assay_format_col: str = typer.Option(
-        "assay_format", "--assay-format-col", help="Column name for assay format."
-    ),
-    biochemical_format: str = typer.Option(
-        "biochemical", "--biochemical-format", help="Label for biochemical assays."
-    ),
-    cellular_format: str = typer.Option(
-        "cellular", "--cellular-format", help="Label for cellular assays."
-    ),
-    score_col: str | None = typer.Option(
-        None,
-        "--score-col",
-        help="Continuous score column to derive binary 'active' labels when no explicit activity is present.",
-    ),
-    score_threshold: float = typer.Option(
-        3.0,
-        "--score-threshold",
-        help="Absolute threshold applied to --score-col to derive 'active'.",
-    ),
-    biochemical_out: Path = typer.Option(
-        ..., "--biochemical-out", help="Output file for biochemical subset."
-    ),
-    cellular_out: Path = typer.Option(
-        ..., "--cellular-out", help="Output file for cellular subset."
-    ),
-    rename_columns: bool = typer.Option(
-        False,
-        "--rename-cols",
-        help="Rename columns to canonical names (smiles, assay_id, active).",
-    ),
-    log_file: Path | None = typer.Option(None, "--log-file", help="Optional log file path."),
+    hts_file: Path = typer.Option(..., "--hts-file", help="Path to HTS data file."),
+    assay_props_file: Path = typer.Option(..., "--assay-props-file", help="Path to assay properties file."),
+    id_to_smiles_file: Path | None = typer.Option(None, "--id-to-smiles-file", help="Optional ID-to-SMILES mapping."),
+    id_col: str = typer.Option("compound_id", "--id-col"),
+    smiles_col: str = typer.Option("smiles", "--smiles-col"),
+    assay_col: str = typer.Option("assay_id", "--assay-col"),
+    active_col: str = typer.Option("active", "--active-col"),
+    assay_format_col: str = typer.Option("assay_format", "--assay-format-col"),
+    biochemical_format: str = typer.Option("biochemical", "--biochemical-format"),
+    cellular_format: str = typer.Option("cellular", "--cellular-format"),
+    score_col: str | None = typer.Option(None, "--score-col"),
+    score_threshold: float = typer.Option(3.0, "--score-threshold"),
+    biochemical_out: Path = typer.Option(..., "--biochemical-out"),
+    cellular_out: Path = typer.Option(..., "--cellular-out"),
+    rename_columns: bool = typer.Option(False, "--rename-cols"),
+    skip_tautomers: bool = typer.Option(False, "--skip-tautomers", help="Skip expensive tautomer canonicalization if input is already clean."),
+    log_file: Path | None = typer.Option(None, "--log-file"),
+    stats_out: Path | None = typer.Option(None, "--stats-out", help="Optional JSON file to write cleaning statistics. Defaults to <biochemical_out>/assay_cleaning_stats.json."),
+    n_jobs: int = typer.Option(-1, "--n-jobs", help="Number of CPU cores. -1 for all."),
 ) -> None:
     """Clean HTS data and split into biochemical and cellular subsets."""
     logger = _setup_logger(log_file)
 
-    hts_df = read_table(hts_file)
-    assay_props_df = read_table(assay_props_file)
-    logger.info("Loaded HTS data: %s rows", f"{hts_df.height:,}")
-    logger.info("Loaded assay properties: %s rows", f"{assay_props_df.height:,}")
+    if n_jobs < 1:
+        n_jobs = multiprocessing.cpu_count()
+    
+    logger.info("Starting processing with %d CPU cores", n_jobs)
+    if skip_tautomers:
+        logger.info("Skipping tautomer enumeration (Fast Mode)")
 
+    # 1. Load Data
+    hts_lazy = scan_table(hts_file)
+    assay_props_lazy = scan_table(assay_props_file)
+
+    # 2. Prepare SMILES List
     if id_to_smiles_file:
-        id_to_smiles_df = read_table(id_to_smiles_file)
-        logger.info("Loaded ID-to-SMILES mapping: %s rows", f"{id_to_smiles_df.height:,}")
+        id_to_smiles_df = (
+            scan_table(id_to_smiles_file)
+            .select([id_col, smiles_col])
+            .collect()
+        )
     else:
-        id_to_smiles_df = hts_df.select([id_col, smiles_col]).unique()
-        logger.info("Built ID-to-SMILES mapping from HTS data")
+        id_to_smiles_df = (
+            hts_lazy
+            .select([id_col, smiles_col])
+            .unique()
+            .collect(engine="streaming")
+        )
 
+    id_to_smiles_df = id_to_smiles_df.filter(pl.col(smiles_col).is_not_null())
+    
     original_smiles_count = id_to_smiles_df.height
-    processor = ChemicalProcessor()
-
-    canonical_map: dict[str, Optional[str]] = {}
     smiles_list = id_to_smiles_df[smiles_col].to_list()
+
+    # 3. Parallel Processing
+    canonical_results = []
+    drop_reasons = []
     with Progress(*PROGRESS_COLUMNS) as progress:
         task_id = progress.add_task("Processing structures", total=len(smiles_list))
-        for smi in smiles_list:
-            canonical_map[smi] = processor.process_smiles(smi)
-            progress.advance(task_id)
-        progress.update(task_id, description="[green]Structures processed")
 
-    id_to_smiles_df = id_to_smiles_df.with_columns(
-        pl.col(smiles_col)
-        .map_elements(lambda x: canonical_map.get(x), return_dtype=pl.Utf8)
-        .alias("canonical_smiles")
+        # Initialize workers with the configuration flag
+        with multiprocessing.Pool(
+            processes=n_jobs, 
+            initializer=_init_worker, 
+            initargs=(skip_tautomers,)
+        ) as pool:
+            
+            results_iter = pool.imap(_process_wrapper, smiles_list, chunksize=1000)
+            
+            for res in results_iter:
+                canonical, reason = res
+                canonical_results.append(canonical)
+                drop_reasons.append(reason)
+                progress.advance(task_id)
+
+    # 4. Reattach Results
+    processed_df = pl.DataFrame(
+        {
+            smiles_col: smiles_list,
+            "canonical_smiles": canonical_results,
+            "clean_reason": drop_reasons,
+        }
     )
 
-    id_to_smiles_df = id_to_smiles_df.filter(pl.col("canonical_smiles").is_not_null())
-    retained_smiles_count = id_to_smiles_df.height
+    reason_counts = (
+        processed_df.select(pl.col("clean_reason"))
+        .to_series()
+        .value_counts(sort=True)
+        .to_dicts()
+    )
+    reason_counts_map = {
+        entry["clean_reason"]: int(entry["count"]) for entry in reason_counts
+    }
 
-    dropped_count = original_smiles_count - retained_smiles_count
-    logger.info("Original unique compounds: %s", f"{original_smiles_count:,}")
-    logger.info("Dropped compounds (filters/errors): %s", f"{dropped_count:,}")
-    logger.info("Retained valid compounds: %s", f"{retained_smiles_count:,}")
+    processed_df = processed_df.filter(pl.col("canonical_smiles").is_not_null())
+    retained_smiles_count = processed_df.height
 
-    clean_hts_df = hts_df.join(
-        id_to_smiles_df.select([id_col, "canonical_smiles"]),
-        on=id_col,
-        how="inner",
+    logger.info("Structure cleaning stats:")
+    logger.info("  - Input unique structures: %s", f"{original_smiles_count:,}")
+    logger.info("  - Valid canonical structures: %s", f"{retained_smiles_count:,}")
+    logger.info("  - Dropped: %s", f"{original_smiles_count - retained_smiles_count:,}")
+    logger.info("Drop reasons (unique SMILES):")
+    for reason, count in sorted(reason_counts_map.items(), key=lambda kv: kv[1], reverse=True):
+        logger.info("  - %s: %s", reason, f"{count:,}")
+
+    # 5. Join Back to Data
+    clean_ids = (
+        id_to_smiles_df
+        .join(processed_df, on=smiles_col, how="inner")
+        .select([id_col, "canonical_smiles"])
     )
 
-    if "smiles" not in clean_hts_df.columns:
-        clean_hts_df = clean_hts_df.rename({"canonical_smiles": "smiles"})
-    else:
-        clean_hts_df = clean_hts_df.drop("smiles").rename({"canonical_smiles": "smiles"})
+    clean_hts_lazy = (
+        hts_lazy.join(clean_ids.lazy(), on=id_col, how="inner")
+        .with_columns(pl.col("canonical_smiles").alias(smiles_col))
+        .drop("canonical_smiles")
+    )
 
-    logger.info("HTS rows remaining after structure cleaning: %s", f"{clean_hts_df.height:,}")
-
-    clean_hts_df = clean_hts_df.join(
-        assay_props_df.select([assay_col, assay_format_col]),
+    # 6. Join Assay Props
+    clean_hts_lazy = clean_hts_lazy.join(
+        assay_props_lazy.select([assay_col, assay_format_col]),
         on=assay_col,
-        how="inner",
+        how="inner"
     )
 
     if rename_columns:
-        clean_hts_df = rename_cols(
-            clean_hts_df,
-            smiles_col="smiles",
-            assay_col=assay_col,
-            active_col=active_col,
-        )
-        logger.info("Columns renamed to canonical names")
+        clean_hts_lazy = rename_cols(clean_hts_lazy, smiles_col, assay_col, active_col)
 
-    if "active" not in clean_hts_df.columns:
-        if score_col is not None and score_col in clean_hts_df.columns:
-            logger.info(
-                "Deriving 'active' column from R-score column '%s' using threshold %s",
-                score_col,
-                score_threshold,
-            )
-            clean_hts_df = clean_hts_df.with_columns(
+    # 7. Activity Logic
+    cols = clean_hts_lazy.collect_schema().names()
+    if "active" not in cols:
+        if score_col and score_col in cols:
+            logger.info("Deriving 'active' from '%s' >= %s", score_col, score_threshold)
+            clean_hts_lazy = clean_hts_lazy.with_columns(
                 (pl.col(score_col).abs() >= score_threshold).cast(pl.Int8).alias("active")
             )
         else:
-            raise typer.BadParameter(
-                "No 'active' column present after cleaning and no valid --score-col configured. "
-                "Provide an activity column via --active-col/--rename-cols or specify --score-col."
-            )
+            raise typer.BadParameter("Missing 'active' column or valid --score-col.")
     else:
-        clean_hts_df = clean_hts_df.with_columns(pl.col("active").cast(pl.Int8))
+        clean_hts_lazy = clean_hts_lazy.with_columns(pl.col("active").cast(pl.Int8))
 
-    biochemical_df = clean_hts_df.filter(pl.col(assay_format_col) == biochemical_format)
-    cellular_df = clean_hts_df.filter(pl.col(assay_format_col) == cellular_format)
+    compound_col_out = "compound_id" if rename_columns else id_col
+    assay_col_out = "assay_id" if rename_columns else assay_col
 
-    logger.info("Biochemical subset: %s rows", f"{biochemical_df.height:,}")
-    logger.info("Cellular subset: %s rows", f"{cellular_df.height:,}")
+    def summarize_lazy(
+        lf: pl.LazyFrame, compound_column: str, assay_column: str
+    ) -> dict[str, int]:
+        stats = (
+            lf.select(
+                pl.len().alias("rows"),
+                pl.col(compound_column).n_unique().alias("unique_compounds"),
+                pl.col(assay_column).n_unique().alias("unique_assays"),
+            )
+            .collect(streaming=True)
+            .to_dicts()[0]
+        )
+        return {k: int(v) for k, v in stats.items()}
 
-    write_table(biochemical_df, biochemical_out)
-    write_table(cellular_df, cellular_out)
-    logger.info("Wrote biochemical subset to %s", biochemical_out)
-    logger.info("Wrote cellular subset to %s", cellular_out)
+    input_summary = summarize_lazy(hts_lazy, id_col, assay_col)
+    logger.info("Input summary: %s", input_summary)
 
+    # 8. Split and Write
+    biochemical_df = clean_hts_lazy.filter(pl.col(assay_format_col) == biochemical_format)
+    cellular_df = clean_hts_lazy.filter(pl.col(assay_format_col) == cellular_format)
+
+    logger.info("Writing output...")
+    sink_table(biochemical_df, biochemical_out)
+    sink_table(cellular_df, cellular_out)
+    logger.info("Done.")
+
+    output_summary = {
+        "combined_clean": summarize_lazy(clean_hts_lazy, compound_col_out, assay_col_out),
+        "biochemical": summarize_lazy(biochemical_df, compound_col_out, assay_col_out),
+        "cellular": summarize_lazy(cellular_df, compound_col_out, assay_col_out),
+    }
+
+    logger.info("Output summary: %s", output_summary)
+
+    if stats_out is None:
+        stats_out = biochemical_out.parent / "assay_cleaning_stats.json"
+
+    stats_out.parent.mkdir(parents=True, exist_ok=True)
+    stats_payload = {
+        "input": input_summary,
+        "structure_cleaning": {
+            "unique_smiles": original_smiles_count,
+            "valid_canonical_smiles": retained_smiles_count,
+            "dropped": original_smiles_count - retained_smiles_count,
+            "drop_reasons": reason_counts_map,
+            "skip_tautomers": skip_tautomers,
+        },
+        "output": output_summary,
+    }
+    stats_out.write_text(json.dumps(stats_payload, indent=2))
+    logger.info("Wrote stats to %s", stats_out)
 
 def main() -> None:
     app()

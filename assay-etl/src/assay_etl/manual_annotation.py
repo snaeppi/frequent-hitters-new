@@ -15,8 +15,7 @@ from rich.text import Text
 from .assay_parser import AssayDescriptionRecord, parse_assay_description
 from .metadata import AssayMetadata, _format_from_labels
 from .meta_db import upsert_static_metadata
-
-console: Console = Console()
+from .rich_console import console
 
 TARGET_CHOICES = {
     "1": "target-based",
@@ -66,39 +65,47 @@ def _prompt_choice(
     label: str,
     choices: dict[str, str],
     existing: str | None,
+    io_console: Console,
 ) -> str | None:
     """Prompt for a choice, returning None when the user skips the assay."""
     options = "  ".join(f"[{key}] {value}" for key, value in choices.items())
     default_hint = f" (Enter to keep '{existing}')" if existing else ""
     prompt = f"{label}: {options}{default_hint}  [s=skip] "
     while True:
-        raw = console.input(prompt).strip().lower()
+        raw = io_console.input(prompt).strip().lower()
         if raw in {"s", "skip"}:
             return None
         if not raw:
             if existing:
                 return existing
-            console.print("Please pick an option or 's' to skip.")
+            io_console.print("Please pick an option or 's' to skip.")
             continue
         choice = choices.get(raw)
         if choice:
             return choice
-        console.print("Invalid choice. Use 1/2/3 or 's' to skip.")
+        io_console.print("Invalid choice. Use 1/2/3 or 's' to skip.")
 
 
 def _prompt_annotation(
     *,
     existing_target: str | None,
     existing_bioactivity: str | None,
+    io_console: Console,
 ) -> tuple[str, str] | None:
     """Collect target_type and bioactivity_type selections from the user."""
-    target = _prompt_choice(label="Target Type", choices=TARGET_CHOICES, existing=existing_target)
+    target = _prompt_choice(
+        label="Target Type",
+        choices=TARGET_CHOICES,
+        existing=existing_target,
+        io_console=io_console,
+    )
     if target is None:
         return None
     bio = _prompt_choice(
         label="Bioactivity Type",
         choices=BIOACTIVITY_CHOICES,
         existing=existing_bioactivity,
+        io_console=io_console,
     )
     if bio is None:
         return None
@@ -106,7 +113,11 @@ def _prompt_annotation(
 
 
 def _render_header(
-    record: AssayDescriptionRecord, ctx: AnnotationContext, index: int, total: int
+    record: AssayDescriptionRecord,
+    ctx: AnnotationContext,
+    index: int,
+    total: int,
+    io_console: Console,
 ) -> None:
     """Print a compact header with name, URL, and selection context."""
     url = f"https://pubchem.ncbi.nlm.nih.gov/bioassay/{record.aid}"
@@ -121,7 +132,7 @@ def _render_header(
         header.append(f"Selected column: {ctx.selected_column}\n", style="dim")
     header.append("PubChem page: ")
     header.append(url, style=f"link {url}")
-    console.print(Panel(header, title="Assay", expand=False))
+    io_console.print(Panel(header, title="Assay", expand=False))
 
 
 def _row_to_context(row: sqlite3.Row) -> AnnotationContext:
@@ -234,26 +245,30 @@ def annotate_metadata_manual(
     client: httpx.Client,
     index: int,
     total: int,
+    io_console: Console | None = None,
 ) -> bool:
     """Interactively annotate target_type / bioactivity_type for a single assay."""
+    io = io_console or console
+
     try:
         xml_payload = _fetch_assay_description_xml(aid=context.aid, client=client)
         record = parse_assay_description(xml_payload)
     except Exception as exc:  # noqa: BLE001
-        console.print(f"[red]Failed to fetch/parse assay {context.aid}: {exc}[/]")
+        io.print(f"[red]Failed to fetch/parse assay {context.aid}: {exc}[/]")
         return False
 
-    _render_header(record, context, index, total)
-    console.rule("[bold]Assay Description[/bold]")
-    console.print(_format_record_text(record))
-    console.rule()
+    _render_header(record, context, index, total, io_console=io)
+    io.rule("[bold]Assay Description[/bold]")
+    io.print(_format_record_text(record))
+    io.rule()
 
     annotation = _prompt_annotation(
         existing_target=context.target_type,
         existing_bioactivity=context.bioactivity_type,
+        io_console=io,
     )
     if annotation is None:
-        console.print(f"[yellow]Skipped AID {context.aid} (left unchanged).[/]")
+        io.print(f"[yellow]Skipped AID {context.aid} (left unchanged).[/]")
         return False
 
     target_type, bioactivity_type = annotation
@@ -282,7 +297,7 @@ def annotate_metadata_manual(
             )
         ],
     )
-    console.print(
+    io.print(
         f"[green]Updated AID {context.aid}[/green]: "
         f"target_type='{target_type}', bioactivity_type='{bioactivity_type}', "
         f"assay_format='{assay_format or 'none'}'."

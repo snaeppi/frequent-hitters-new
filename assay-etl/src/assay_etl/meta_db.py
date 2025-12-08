@@ -210,6 +210,28 @@ def iter_selected_for_stats(db_path: Path) -> Iterator[tuple[int, str]]:
         conn.close()
 
 
+def iter_assays_with_any_selection(db_path: Path) -> Iterator[int]:
+    """Yield AIDs that have any non-empty selection recorded.
+
+    This includes assays marked as ineligible (selected_column = '__INELIGIBLE__'),
+    since they have already been reviewed during column selection.
+    """
+    conn = _connect(db_path)
+    try:
+        cur = conn.execute(
+            """
+            SELECT aid
+            FROM assay_metadata
+            WHERE selected_column IS NOT NULL
+              AND selected_column != ''
+            """
+        )
+        for row in cur:
+            yield int(row["aid"])
+    finally:
+        conn.close()
+
+
 def iter_selected_for_rscores(
     db_path: Path,
 ) -> Iterator[tuple[int, str, float | None, float | None]]:

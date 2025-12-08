@@ -3,65 +3,52 @@ global:
   models_dir: /path/to/models
   temp_dir: /path/to/temp
   cpus: 4
+  seed: 1337
   submit: false
   datasets:
-    bio_reg: /path/to/processed/all/biochemical_regression_trainval.parquet
-    bio_mt: /path/to/processed/all/biochemical_multilabel_trainval.parquet
-    bio_cal: /path/to/processed/all/biochemical_calibration.parquet
-    bio_test: /path/to/processed/all/biochemical_test.parquet
-    cell_reg: /path/to/processed/all/cellular_regression_trainval.parquet
-    cell_mt: /path/to/processed/all/cellular_multilabel_trainval.parquet
-    cell_cal: /path/to/processed/all/cellular_calibration.parquet
-    cell_test: /path/to/processed/all/cellular_test.parquet
+    bio_reg: /path/to/processed/all/biochemical_regression.parquet
+    bio_mt: /path/to/processed/all/biochemical_multilabel.parquet
+    cell_reg: /path/to/processed/all/cellular_regression.parquet
+    cell_mt: /path/to/processed/all/cellular_multilabel.parquet
 
 tasks:
   # Multi-task
   - type: multilabel
     job_name: mt_bio
     trainval_path: bio_mt
-    calibration_path: bio_cal
-    test_path: bio_test
-    predict_calibration: true
     predict_test: true
+    split_seed: 1337
 
   - type: multilabel
     job_name: mt_cell
     trainval_path: cell_mt
-    calibration_path: cell_cal
-    test_path: cell_all_test
-    predict_calibration: true
     predict_test: true
+    split_seed: 1337
 
   # Regression
   - type: regression
     job_name: reg_bio_min20
     trainval_path: bio_reg
-    calibration_path: bio_cal
-    test_path: bio_test
-    target_column: score
+    target_column: target
     compound_min_screens: 20
     compound_screens_column: screens
-    predict_calibration: true
     predict_test: true
+    split_seed: 1337
 
   - type: regression
     job_name: reg_bio_min50
     trainval_path: bio_reg
-    calibration_path: bio_cal
-    test_path: bio_test
-    target_column: score
+    target_column: target
     compound_min_screens: 50
     compound_screens_column: screens
-    predict_calibration: true
     predict_test: true
+    split_seed: 1337
 
   - type: regression
     job_name: reg_cell_min20
     trainval_path: cell_reg
-    calibration_path: cell_cal
-    test_path: cell_test
-    target_column: score
+    target_column: target
     compound_min_screens: 20
     compound_screens_column: screens
-    predict_calibration: true
     predict_test: true
+    split_seed: 1337

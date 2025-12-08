@@ -18,8 +18,7 @@ def _strip_empty_strings(column: pl.Expr) -> pl.Expr:
 def _canonicalize_strings(cols: list[str]) -> list[pl.Expr]:
     """Cast and clean string columns."""
     return [
-        _strip_empty_strings(pl.col(col).cast(pl.Utf8, strict=False)).alias(col)
-        for col in cols
+        _strip_empty_strings(pl.col(col).cast(pl.Utf8, strict=False)).alias(col) for col in cols
     ]
 
 

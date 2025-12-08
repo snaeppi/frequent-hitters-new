@@ -26,16 +26,12 @@ def _compute_prior(
     Beta(1, 1) with a mean of 0.5.
     """
     if hits_col not in counts_df.columns or screens_col not in counts_df.columns:
-        raise KeyError(
-            f"counts_df must contain '{hits_col}' and '{screens_col}' columns."
-        )
+        raise KeyError(f"counts_df must contain '{hits_col}' and '{screens_col}' columns.")
 
     if counts_df.is_empty():
         return 1.0, 1.0, 0.5
 
-    eligible = counts_df.filter(
-        pl.col(screens_col) >= pl.lit(min_screens_for_prior_fit)
-    )
+    eligible = counts_df.filter(pl.col(screens_col) >= pl.lit(min_screens_for_prior_fit))
     if eligible.is_empty():
         eligible = counts_df
 
@@ -88,9 +84,7 @@ def _aggregate_compound_counts(
         pl.col("active").fill_null(0).cast(pl.UInt32).sum().alias(hits_col),
     ]
     if include_compound_id:
-        value_exprs.append(
-            pl.col("compound_id").drop_nulls().first().alias("compound_id")
-        )
+        value_exprs.append(pl.col("compound_id").drop_nulls().first().alias("compound_id"))
 
     aggregated = (
         data_lf.group_by(group_keys)
@@ -106,40 +100,29 @@ def _aggregate_compound_counts(
     return aggregated
 
 
-def _attach_scores(
+def _attach_score_column(
     df: pl.DataFrame,
     *,
     hits_col: str,
     screens_col: str,
     alpha0: float,
     beta0: float,
+    score_col: str,
 ) -> pl.DataFrame:
-    """Attach raw hit rates and EB scores to the provided DataFrame."""
+    """Attach an EB score column computed with the provided prior."""
     hits_np = df[hits_col].to_numpy().astype(np.float64, copy=False)
     screens_np = df[screens_col].to_numpy().astype(np.float64, copy=False)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        raw_rate_np = np.divide(
-            hits_np,
-            screens_np,
-            out=np.zeros_like(hits_np, dtype=np.float64),
-            where=screens_np > 0,
-        )
 
     denom = screens_np + alpha0 + beta0
     with np.errstate(divide="ignore", invalid="ignore"):
         score_np = np.divide(
             hits_np + alpha0,
             denom,
-            out=np.full_like(raw_rate_np, fill_value=np.nan, dtype=np.float64),
+            out=np.full_like(screens_np, fill_value=np.nan, dtype=np.float64),
             where=denom > 0,
         )
 
-    return df.with_columns(
-        [
-            pl.Series("hit_rate", raw_rate_np).cast(pl.Float64),
-            pl.Series("score", score_np).cast(pl.Float64),
-        ]
-    )
+    return df.with_columns([pl.Series(score_col, score_np).cast(pl.Float64)])
 
 
 def _retention_curve_from_screens(screens: np.ndarray) -> pl.DataFrame:
@@ -171,21 +154,18 @@ def _retention_curve_from_screens(screens: np.ndarray) -> pl.DataFrame:
     )
 
 
-def build_compound_metadata(
+def compute_compound_counts(
     filtered_data_lf: pl.LazyFrame,
-    output_dir: Path,
     *,
-    min_screens_per_compound: int = 1,
+    min_screens_per_compound: int,
     min_screens_for_prior_fit: int,
+    output_dir: Path,
     enable_plots: bool,
-) -> tuple[pl.DataFrame, pl.DataFrame, dict[str, object]]:
+) -> tuple[pl.DataFrame, dict[str, object]]:
     """
-    Aggregate compound-level stats, apply Empirical Bayes shrinkage, and persist outputs.
+    Aggregate per-compound counts and attach reliability flags (no EB fitting).
 
-    Returns a tuple of:
-      - filtered compound DataFrame (only reliability-passing compounds)
-      - full compound DataFrame annotated with EB score and a `passes_reliability_filter` flag
-      - diagnostics dictionary for downstream logging
+    Returns the full compound DataFrame (including non-eligible compounds) and diagnostics.
     """
     if min_screens_per_compound < 1:
         raise ValueError("min_screens_per_compound must be >= 1.")
@@ -194,7 +174,6 @@ def build_compound_metadata(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Aggregate per-compound counts over the selected assays
     compound_counts_df = _aggregate_compound_counts(
         filtered_data_lf,
         screens_col="screens",
@@ -205,51 +184,41 @@ def build_compound_metadata(
     if total_compounds == 0:
         raise ValueError("No compounds found after upstream filtering.")
 
-    alpha, beta, mean_hit_rate = _compute_prior(
-        compound_counts_df,
-        hits_col="hits",
-        screens_col="screens",
-        min_screens_for_prior_fit=min_screens_for_prior_fit,
-    )
+    hits_np = compound_counts_df["hits"].to_numpy().astype(np.float64, copy=False)
+    screens_np = compound_counts_df["screens"].to_numpy().astype(np.float64, copy=False)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        raw_rate_np = np.divide(
+            hits_np,
+            screens_np,
+            out=np.zeros_like(hits_np, dtype=np.float64),
+            where=screens_np > 0,
+        )
 
-    scored_df = _attach_scores(
-        compound_counts_df,
-        hits_col="hits",
-        screens_col="screens",
-        alpha0=alpha,
-        beta0=beta,
-    )
-
-    fit_expr = pl.col("screens") >= min_screens_for_prior_fit
     filter_expr = pl.col("screens") >= min_screens_per_compound
-    filter_threshold: float = float(min_screens_per_compound)
+    prior_fit_expr = pl.col("screens") >= min_screens_for_prior_fit
+    filter_threshold = float(min_screens_per_compound)
     chosen_label = f"Chosen ≥ {int(min_screens_per_compound)}"
 
-    all_compounds_flagged = scored_df.with_columns(
+    all_compounds = compound_counts_df.with_columns(
         [
-            fit_expr.alias("meets_prior_fit_threshold"),
+            pl.Series("hit_rate", raw_rate_np).cast(pl.Float64),
             filter_expr.alias("passes_reliability_filter"),
+            filter_expr.alias("regression_eligible"),
+            prior_fit_expr.alias("meets_prior_fit_threshold"),
         ]
     )
-    compound_df = all_compounds_flagged.filter(filter_expr)
 
-    retained_compounds = compound_df.height
+    retained_compounds = int(all_compounds.filter(filter_expr).height)
     if retained_compounds == 0:
         raise ValueError(
             "No compounds satisfy the filtering threshold. "
             "Adjust 'min_screens_per_compound' or upstream assay filtering."
         )
 
-    # Persist compound metadata (full universe)
-    all_compounds_flagged.write_parquet(output_dir / "compound_metadata.parquet")
-
-    # Build diagnostics & plots from the full universe
     if enable_plots:
         plot_dir = output_dir / "plots"
         plot_dir.mkdir(exist_ok=True)
-        retention_df = _retention_curve_from_screens(
-            all_compounds_flagged["screens"].to_numpy()
-        )
+        retention_df = _retention_curve_from_screens(all_compounds["screens"].to_numpy())
         viz.plot_retention_curve(
             retention_df,
             filter_threshold,
@@ -263,15 +232,90 @@ def build_compound_metadata(
     diagnostics: dict[str, object] = {
         "total_compounds": total_compounds,
         "retained_compounds": retained_compounds,
-        "passes_flagged": int(
-            all_compounds_flagged.filter(pl.col("passes_reliability_filter")).height
-        ),
+        "passes_flagged": int(all_compounds.filter(filter_expr).height),
         "filter_mode": "min_screens",
         "filter_threshold": filter_threshold,
-        "prior_alpha": alpha,
-        "prior_beta": beta,
-        "prior_mode": "method_of_moments",
-        "prior_mean_hit_rate": mean_hit_rate,
         "min_screens_for_prior_fit": min_screens_for_prior_fit,
     }
-    return compound_df, all_compounds_flagged, diagnostics
+    return all_compounds, diagnostics
+
+
+def score_by_seed(
+    *,
+    regression_df: pl.DataFrame,
+    multitask_df: pl.DataFrame,
+    seeds: list[int],
+    min_screens_for_prior_fit: int,
+) -> tuple[pl.DataFrame, pl.DataFrame, dict[str, object]]:
+    """
+    Fit EB priors on the train split for each seed and attach per-seed score columns.
+
+    Returns (regression_df_with_scores, multitask_df_with_scores, diagnostics).
+    """
+    if not seeds:
+        raise ValueError("At least one seed is required for EB scoring.")
+    if regression_df.is_empty():
+        raise ValueError("Regression split is empty; cannot fit EB priors.")
+    if min_screens_for_prior_fit < 1:
+        raise ValueError("min_screens_for_prior_fit must be >= 1.")
+
+    reg_scored = regression_df
+    mt_scored = multitask_df
+    priors: dict[str, object] = {}
+
+    for seed in seeds:
+        split_col = f"split{seed}"
+        score_col = f"score_seed{seed}"
+        if split_col not in regression_df.columns:
+            raise KeyError(f"Missing split column '{split_col}' for seed {seed}.")
+
+        train_subset = regression_df.filter(pl.col(split_col) == "train")
+        if train_subset.is_empty():
+            raise ValueError(f"No training compounds found for seed {seed}.")
+
+        alpha, beta, mean_hit_rate = _compute_prior(
+            train_subset,
+            hits_col="hits",
+            screens_col="screens",
+            min_screens_for_prior_fit=min_screens_for_prior_fit,
+        )
+
+        reg_scored = _attach_score_column(
+            reg_scored,
+            hits_col="hits",
+            screens_col="screens",
+            alpha0=alpha,
+            beta0=beta,
+            score_col=score_col,
+        )
+        mt_scored = _attach_score_column(
+            mt_scored,
+            hits_col="hits",
+            screens_col="screens",
+            alpha0=alpha,
+            beta0=beta,
+            score_col=score_col,
+        )
+
+        priors[str(seed)] = {
+            "alpha": alpha,
+            "beta": beta,
+            "mean_hit_rate": mean_hit_rate,
+            "train_compounds": int(train_subset.height),
+            "train_compounds_meeting_fit_threshold": int(
+                train_subset.filter(pl.col("screens") >= min_screens_for_prior_fit).height
+            ),
+        }
+
+    if len(seeds) == 1:
+        seed_col = f"score_seed{seeds[0]}"
+        if seed_col in reg_scored.columns:
+            reg_scored = reg_scored.with_columns(pl.col(seed_col).alias("score"))
+            mt_scored = mt_scored.with_columns(pl.col(seed_col).alias("score"))
+
+    diagnostics: dict[str, object] = {
+        "prior_mode": "method_of_moments",
+        "min_screens_for_prior_fit": min_screens_for_prior_fit,
+        "priors_by_seed": priors,
+    }
+    return reg_scored, mt_scored, diagnostics

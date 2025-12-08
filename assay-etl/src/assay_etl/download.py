@@ -227,6 +227,7 @@ def process_zip_worker(
 
 class FTPAssayFetcher:
     FTP_BASE = "https://ftp.ncbi.nlm.nih.gov/pubchem/Bioassay/CSV/Data"
+    MAX_DOWNLOAD_RETRIES = 5
 
     def __init__(self, cache_dir: Path, parquet_compression: Compression = "zstd") -> None:
         self._cache_dir = cache_dir
@@ -236,6 +237,19 @@ class FTPAssayFetcher:
 
     def close(self) -> None:
         self._client.close()
+
+    def _is_valid_parquet(self, parquet_path: Path) -> bool:
+        """
+        Lightweight integrity check for an existing parquet file.
+
+        We try to read a single row via a lazy scan; if this
+        fails, we treat the file as corrupt/partial.
+        """
+        try:
+            pl.scan_parquet(parquet_path.as_posix()).head(1).collect()
+            return True
+        except Exception:
+            return False
 
     def _download_zip(self, start: int, end: int) -> Path:
         url = f"{self.FTP_BASE}/{start:07d}_{end:07d}.zip"
@@ -248,17 +262,22 @@ class FTPAssayFetcher:
             else:
                 zip_path.unlink()
 
-        try:
-            with self._client.stream("GET", url) as resp:
-                resp.raise_for_status()
-                with part_path.open("wb") as fh:
-                    for chunk in resp.iter_bytes():
-                        fh.write(chunk)
-            part_path.rename(zip_path)
-            return zip_path
-        except Exception:
-            part_path.unlink(missing_ok=True)
-            raise
+        last_exc: Exception | None = None
+        for _ in range(self.MAX_DOWNLOAD_RETRIES):
+            try:
+                with self._client.stream("GET", url) as resp:
+                    resp.raise_for_status()
+                    with part_path.open("wb") as fh:
+                        for chunk in resp.iter_bytes():
+                            fh.write(chunk)
+                part_path.rename(zip_path)
+                return zip_path
+            except Exception as exc:
+                last_exc = exc
+                part_path.unlink(missing_ok=True)
+
+        assert last_exc is not None
+        raise last_exc
 
     def fetch_assays(
         self, aids: Sequence[int], force_download: bool, io_workers: int = 4, cpu_workers: int = 4
@@ -269,7 +288,11 @@ class FTPAssayFetcher:
         for aid in aids:
             parquet_path = self._cache_dir / f"aid_{aid}.parquet"
             if parquet_path.exists() and not force_download:
-                existing_results.append(AssayTablePaths(aid=aid, parquet_path=parquet_path))
+                if self._is_valid_parquet(parquet_path):
+                    existing_results.append(AssayTablePaths(aid=aid, parquet_path=parquet_path))
+                else:
+                    parquet_path.unlink(missing_ok=True)
+                    missing_aids.append(aid)
             else:
                 missing_aids.append(aid)
 

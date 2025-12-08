@@ -1,30 +1,14 @@
 from __future__ import annotations
 
-import ast
 import logging
 import os
 import subprocess
 from pathlib import Path
-from typing import Callable, Sequence, cast
+from typing import Callable, Sequence
 
 import typer
-from rich.progress import (
-    BarColumn,
-    Progress,
-    SpinnerColumn,
-    TaskID,
-    TextColumn,
-    TimeElapsedColumn,
-    TimeRemainingColumn,
-)
 
-from .datasets import (
-    resolve_thresholds,
-    write_regression_dataset,
-    write_smiles_csv,
-    write_threshold_classifier_dataset,
-    write_trimmed_dataset,
-)
+from .datasets import resolve_thresholds, write_regression_dataset, write_threshold_classifier_dataset, write_trimmed_dataset
 from .jobgen import ConfigError, JobDefinition, load_submission_plan
 
 LOGGER = logging.getLogger("model_jobs.cli")
@@ -32,16 +16,6 @@ app = typer.Typer(
     no_args_is_help=True,
     help="Utilities for preparing Chemprop training and prediction inputs.",
 )
-
-PROGRESS_COLUMNS = (
-    SpinnerColumn(),
-    TextColumn("[progress.description]{task.description}"),
-    BarColumn(),
-    TextColumn("{task.completed}/{task.total}"),
-    TimeElapsedColumn(),
-    TimeRemainingColumn(),
-)
-
 
 def _setup_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.INFO
@@ -61,18 +35,8 @@ def _write_scripts_and_maybe_submit(
     submit_label: str,
     logger: logging.Logger = LOGGER,
 ) -> None:
-    progress: Progress | None = None
-    task_id: TaskID | None = None
-    if len(jobs) > 1:
-        progress = Progress(*PROGRESS_COLUMNS)
-        progress.start()
-        task_id = progress.add_task(f"{submit_label.title()} in progress", total=len(jobs))
-
     try:
         for job in jobs:
-            if progress and task_id is not None:
-                progress.update(task_id, description=f"{submit_label.title()}: {job.job_name}")
-
             script_path = output_dir / job.filename
             content = job.content if job.content.endswith("\n") else f"{job.content}\n"
             script_path.write_text(content)
@@ -86,22 +50,8 @@ def _write_scripts_and_maybe_submit(
                 submitter(script_path)
             else:
                 logger.info("Generated %s (%s skipped by config)", script_path, submit_label)
-
-            if progress and task_id is not None:
-                progress.advance(task_id)
-
-        if progress and task_id is not None:
-            progress.update(task_id, description=f"[green]{submit_label.title()} complete")
     finally:
-        if progress:
-            progress.stop()
-
-
-def _parse_filter_value(value: str) -> object:
-    try:
-        return ast.literal_eval(value)
-    except (ValueError, SyntaxError):
-        return value
+        pass
 
 
 @app.callback()
@@ -121,7 +71,9 @@ def prepare_regression(
     split_column: str = typer.Option(
         "split", "--split-column", help="Column containing split assignments."
     ),
-    target_column: str = typer.Option("score", "--target-column", help="Regression target column."),
+    target_column: str = typer.Option(
+        "target", "--target-column", help="Regression target column."
+    ),
     compound_min_screens: float | None = typer.Option(
         None,
         "--compound-min-screens",
@@ -196,6 +148,17 @@ def prepare_threshold_classifier(
     ),
 ) -> None:
     """Filter a dataset to binary labels and emit a classification Parquet file."""
+
+    def _infer_seed_from_split(split_value: str) -> int | None:
+        if not split_value:
+            return None
+        text = str(split_value)
+        if text.startswith("split"):
+            suffix = text[5:]
+            if suffix.isdigit():
+                return int(suffix)
+        return None
+
     try:
         lo, hi = resolve_thresholds(
             lower_threshold=lower_threshold,
@@ -203,6 +166,7 @@ def prepare_threshold_classifier(
             thresholds_json=thresholds_json,
             lower_percentile=lower_percentile,
             upper_percentile=upper_percentile,
+            seed=_infer_seed_from_split(split_column),
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc))
@@ -216,53 +180,6 @@ def prepare_threshold_classifier(
         target_column=target_column,
         lower_threshold=lo,
         upper_threshold=hi,
-        compound_min_screens=compound_min_screens,
-        compound_screens_column=compound_screens_column,
-    )
-    LOGGER.info("Wrote %s", path)
-    typer.echo(path)
-
-
-@app.command("prepare-smiles-csv")
-def prepare_smiles_csv(
-    input_path: Path = typer.Option(..., "--input", help="Source Parquet file."),
-    output_path: Path = typer.Option(..., "--output", help="Path to the output CSV file."),
-    smiles_column: str = typer.Option(
-        "smiles", "--smiles-column", help="Column containing SMILES strings."
-    ),
-    filters: list[str] = typer.Option(
-        [],
-        "--filter",
-        help="Filter rows where COLUMN equals VALUE (repeatable; COLUMN=VALUE).",
-    ),
-    compound_min_screens: float | None = typer.Option(
-        None,
-        "--compound-min-screens",
-        help="Filter out compounds with fewer screens than this threshold.",
-    ),
-    compound_screens_column: str = typer.Option(
-        "screens",
-        "--compound-screens-column",
-        help="Column holding the per-compound screen count.",
-    ),
-) -> None:
-    """Extract SMILES (optionally filtered) to a CSV file for Chemprop prediction."""
-    parsed_filters: dict[str, list[object]] = {}
-    for raw in filters:
-        if "=" not in raw:
-            raise typer.BadParameter(f"Invalid filter '{raw}'. Expected COLUMN=VALUE.")
-        column, value = raw.split("=", 1)
-        column = column.strip()
-        value = value.strip()
-        if not column:
-            raise typer.BadParameter(f"Invalid filter '{raw}': column name is empty.")
-        parsed_filters.setdefault(column, []).append(_parse_filter_value(value))
-
-    path = write_smiles_csv(
-        input_path=input_path,
-        output_path=output_path,
-        smiles_column=smiles_column,
-        filters=cast(dict[str, Sequence[object]] | None, parsed_filters or None),
         compound_min_screens=compound_min_screens,
         compound_screens_column=compound_screens_column,
     )

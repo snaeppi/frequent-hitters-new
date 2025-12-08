@@ -16,7 +16,6 @@ from rich.progress import (
     SpinnerColumn,
     TextColumn,
     TimeElapsedColumn,
-    TimeRemainingColumn,
 )
 
 from . import eb, export, filters, io, split
@@ -27,7 +26,6 @@ PROGRESS_COLUMNS = (
     BarColumn(),
     TextColumn("{task.completed}/{task.total}"),
     TimeElapsedColumn(),
-    TimeRemainingColumn(),
 )
 
 
@@ -95,7 +93,7 @@ def run_pipeline(cfg: DictConfig, *, hydra_output_dir: Path) -> None:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         task_label = assay_format.capitalize()
-        total_steps = 6
+        total_steps = 7
         with Progress(*PROGRESS_COLUMNS) as progress:
             task_id = progress.add_task(f"{task_label}: preparing", total=total_steps)
 
@@ -119,36 +117,51 @@ def run_pipeline(cfg: DictConfig, *, hydra_output_dir: Path) -> None:
             )
             progress.advance(task_id)
 
-            progress.update(task_id, description=f"{task_label}: reliability scoring")
-            _reliable_df, all_compounds_df, eb_summary = eb.build_compound_metadata(
+            progress.update(task_id, description=f"{task_label}: compound aggregation")
+            compound_counts_df, counts_summary = eb.compute_compound_counts(
                 filtered_lf,
-                output_dir,
                 min_screens_per_compound=int(cfg.filters.min_screens_per_compound),
                 min_screens_for_prior_fit=int(cfg.filters.min_screens_for_prior_fit),
+                output_dir=output_dir,
                 enable_plots=bool(cfg.enable_plots),
             )
             progress.advance(task_id)
 
             progress.update(task_id, description=f"{task_label}: scaffold splits")
-            fractions = {split_name: float(value) for split_name, value in cfg.split.fractions.items()}
-            split_map_df, _split_summary = split.assign_scaffold_splits(
-                all_compounds_df,
+            fractions = {
+                split_name: float(value) for split_name, value in cfg.split.fractions.items()
+            }
+            seeds = [int(seed) for seed in cfg.split.seeds]
+            reg_split_df, mt_split_df, _split_summary = split.assign_multiseed_splits(
+                compound_counts_df,
                 output_dir,
                 fractions=fractions,
-                seed=int(cfg.split.seed),
+                seeds=seeds,
                 enable_plots=bool(cfg.enable_plots),
                 scaffold_store=scaffold_store,
             )
+            progress.advance(task_id)
+
+            progress.update(task_id, description=f"{task_label}: EB scoring")
+            reg_scored_df, mt_scored_df, eb_summary = eb.score_by_seed(
+                regression_df=reg_split_df,
+                multitask_df=mt_split_df,
+                seeds=seeds,
+                min_screens_for_prior_fit=int(cfg.filters.min_screens_for_prior_fit),
+            )
+            compound_metadata_df = mt_scored_df
+            compound_metadata_df.write_parquet(output_dir / "compound_metadata.parquet")
             progress.advance(task_id)
 
             progress.update(task_id, description=f"{task_label}: export datasets")
             _dataset_counts, _thresholds = export.write_model_datasets(
                 assay_format,
                 filtered_lf,
-                all_compounds_df,
-                split_map_df,
+                reg_scored_df,
+                mt_scored_df,
                 output_dir,
-                filter_threshold=eb_summary["filter_threshold"],
+                filter_threshold=counts_summary["filter_threshold"],
+                seeds=seeds,
             )
             progress.advance(task_id)
 

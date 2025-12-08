@@ -259,7 +259,7 @@ def write_smiles_csv(
     return output_path
 
 
-def _load_threshold_mapping(json_path: Path) -> dict[float, float]:
+def _load_threshold_mapping(json_path: Path, seed: int | None = None) -> dict[float, float]:
     """
     Load a mapping from percentile -> threshold value from a JSON file.
 
@@ -267,6 +267,7 @@ def _load_threshold_mapping(json_path: Path) -> dict[float, float]:
       - {"percentiles": {"50": 0.047, "55": 0.052, ...}}
       - {"percentiles": [{"percentile": 50, "hit_rate": 0.047}, ...]}
       - Direct mapping as a fallback: {"50": 0.047, "55": 0.052, ...}
+      - {"percentiles_by_seed": {"1337": {"50": 0.047, ...}, ...}}
     """
     import json
 
@@ -283,8 +284,28 @@ def _load_threshold_mapping(json_path: Path) -> dict[float, float]:
     with open(json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    # Focus on "percentiles" if present; otherwise attempt to interpret the object directly.
-    obj = data["percentiles"] if isinstance(data, dict) and "percentiles" in data else data
+    obj = data
+    if isinstance(data, dict):
+        seed_map = data.get("percentiles_by_seed")
+        if isinstance(seed_map, dict) and seed_map:
+            if seed is None:
+                if len(seed_map) == 1:
+                    obj = next(iter(seed_map.values()))
+                else:
+                    available = ", ".join(sorted(seed_map.keys()))
+                    raise ValueError(
+                        f"percentiles_by_seed present; specify a seed (available: {available})."
+                    )
+            else:
+                key = str(seed)
+                if key not in seed_map:
+                    available = ", ".join(sorted(seed_map.keys()))
+                    raise ValueError(
+                        f"Seed {seed} not found in percentiles_by_seed. Available: {available}"
+                    )
+                obj = seed_map[key]
+        else:
+            obj = data["percentiles"] if "percentiles" in data else data
 
     # Case A: dict mapping. Support both direct mappings like {"50": 0.047, ...}
     # and nested payloads like {"score": {"50": 0.047, ...}}.
@@ -345,6 +366,7 @@ def resolve_thresholds(
     thresholds_json: str | Path | None,
     lower_percentile: float | None,
     upper_percentile: float | None,
+    seed: int | None = None,
 ) -> tuple[float, float]:
     # Case 1: explicit thresholds provided
     if lower_threshold is not None or upper_threshold is not None:
@@ -362,7 +384,7 @@ def resolve_thresholds(
             "Both lower_percentile and upper_percentile are required with thresholds_json."
         )
 
-    mapping = _load_threshold_mapping(Path(thresholds_json))
+    mapping = _load_threshold_mapping(Path(thresholds_json), seed=seed)
     if not mapping:
         raise ValueError(f"No valid percentile mapping found in {thresholds_json}")
 

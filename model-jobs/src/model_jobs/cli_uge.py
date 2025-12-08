@@ -7,7 +7,7 @@ from typing import Sequence
 
 import typer
 
-from model_jobs.cli import _setup_logging, _write_scripts_and_maybe_submit, PROGRESS_COLUMNS
+from model_jobs.cli import _setup_logging, _write_scripts_and_maybe_submit
 from model_jobs.jobgen_uge import ConfigError, load_submission_plan
 
 LOGGER = logging.getLogger("model_jobs.cli_uge")

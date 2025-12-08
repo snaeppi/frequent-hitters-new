@@ -122,12 +122,12 @@ echo
 "${PIPELINE_CMD[@]}" "${PIPELINE_ARGS[@]}"
 
 ASSAY_FORMAT=""
-if [[ -f "${PIPELINE_OUT}/biochemical/biochemical_regression_trainval.parquet" ]]; then
+if [[ -f "${PIPELINE_OUT}/biochemical/biochemical_regression.parquet" ]]; then
   ASSAY_FORMAT="biochemical"
-elif [[ -f "${PIPELINE_OUT}/cellular/cellular_regression_trainval.parquet" ]]; then
+elif [[ -f "${PIPELINE_OUT}/cellular/cellular_regression.parquet" ]]; then
   ASSAY_FORMAT="cellular"
 else
-  echo "[ERROR] No regression_trainval outputs found under ${PIPELINE_OUT}" >&2
+  echo "[ERROR] No regression outputs found under ${PIPELINE_OUT}" >&2
   exit 1
 fi
 
@@ -144,48 +144,41 @@ global:
   conda_commands: []
   conda_activate: ""
   cpus: 2
+  seed: 1337
   submit: false
   datasets:
-    bio_reg: ${PIPELINE_OUT}/${ASSAY_FORMAT}/${ASSAY_FORMAT}_regression_trainval.parquet
-    bio_mt: ${PIPELINE_OUT}/${ASSAY_FORMAT}/${ASSAY_FORMAT}_multilabel_trainval.parquet
-    bio_cal: ${PIPELINE_OUT}/${ASSAY_FORMAT}/${ASSAY_FORMAT}_calibration.parquet
-    bio_test: ${PIPELINE_OUT}/${ASSAY_FORMAT}/${ASSAY_FORMAT}_test.parquet
+    bio_reg: ${PIPELINE_OUT}/${ASSAY_FORMAT}/${ASSAY_FORMAT}_regression.parquet
+    bio_mt: ${PIPELINE_OUT}/${ASSAY_FORMAT}/${ASSAY_FORMAT}_multilabel.parquet
     bio_thresholds: ${PIPELINE_OUT}/${ASSAY_FORMAT}/${ASSAY_FORMAT}_thresholds.json
 
 tasks:
   - type: multilabel
     job_name: it_mt_bio
     trainval_path: bio_mt
-    calibration_path: bio_cal
-    test_path: bio_test
-    predict_calibration: true
     predict_test: true
+    split_seed: 1337
     epochs: 3
     ensemble_size: 1
 
   - type: regression
     job_name: it_reg_bio
     trainval_path: bio_reg
-    calibration_path: bio_cal
-    test_path: bio_test
+    split_seed: 1337
     target_column: score
     compound_min_screens: 1
     compound_screens_column: screens
-    predict_calibration: true
     predict_test: true
     epochs: 3
 
   - type: threshold
     job_name: it_thr_bio
     trainval_path: bio_reg
-    calibration_path: bio_cal
-    test_path: bio_test
+    split_seed: 1337
     thresholds_json: bio_thresholds
     metric_column: score
     target_column: target
     compound_min_screens: 1
     compound_screens_column: screens
-    predict_calibration: true
     predict_test: true
     thresholds:
       - suffix: p50_95
@@ -218,8 +211,8 @@ done
 
 echo "[INFO] Checking for expected outputs"
 
-test -f "${ARTIFACTS_DIR}/models/it_reg_bio/predictions/calibration_preds.csv" || {
-  echo "[ERROR] Missing calibration predictions for it_reg_bio" >&2
+test -f "${ARTIFACTS_DIR}/models/it_reg_bio/predictions/test_preds.csv" || {
+  echo "[ERROR] Missing test predictions for it_reg_bio" >&2
   exit 1
 }
 

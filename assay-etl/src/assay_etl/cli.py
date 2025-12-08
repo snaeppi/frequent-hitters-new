@@ -6,8 +6,8 @@ import httpx
 from pathlib import Path
 from typing import List, Optional
 
+import polars as pl
 import typer
-from rich.console import Console
 from rich.progress import (
     BarColumn,
     Progress,
@@ -21,20 +21,27 @@ from .download import download_assays
 from .meta_db import (
     export_metadata_to_csv,
     import_metadata_csv,
+    iter_assays_with_any_selection,
+    iter_selected_for_rscores,
     iter_selected_for_stats,
     upsert_static_metadata,
 )
-from .metadata import AssayMetadata, build_initial_metadata, update_metadata_row_with_stats
+from .metadata import (
+    AssayMetadata,
+    build_initial_metadata,
+    load_hd3_annotated_aids,
+    update_metadata_row_with_stats,
+)
 from .pcassay_catalog import iter_aids_from_pcassay
-from .rscores import compute_rscores_from_metadata
+from .rscores import compute_rscores_for_assay
 from .selection import _compute_candidate_stats, interactive_select_for_aid
 from .manual_annotation import (
     annotate_metadata_manual,
     iter_annotation_contexts,
     load_annotation_context,
 )
-
-console: Console = Console()
+from .rich_console import console
+from .utils import assay_table_path
 
 PROGRESS_COLUMNS = (
     SpinnerColumn(),
@@ -44,7 +51,15 @@ PROGRESS_COLUMNS = (
     TimeElapsedColumn(),
     TimeRemainingColumn(),
 )
-PROGRESS_OPTS = {"console": console, "refresh_per_second": 0}
+
+PROGRESS_OPTS = {"console": console}
+
+def _render_progress_once(progress: Progress) -> None:
+    """Render the current progress bar once on its own line."""
+    console.line()
+    progress.start()
+    progress.refresh()
+    progress.stop()
 
 app = typer.Typer(
     no_args_is_help=True,
@@ -82,17 +97,6 @@ def _resolve_aids(
     raise typer.BadParameter("Specify --aid, --from-pcassay, or --aids-file.")
 
 
-def _aggregated_path(base_dir: Path, aid: int) -> Path:
-    """Prefer the new naming (aid_<AID>.parquet), fall back to legacy suffix."""
-    preferred = base_dir / f"aid_{aid}.parquet"
-    legacy = base_dir / f"aid_{aid}_cid_agg.parquet"
-    if preferred.exists():
-        return preferred
-    if legacy.exists():
-        return legacy
-    return preferred
-
-
 @app.command("download-assays")
 def download_assays_command(
     aid: Optional[int] = typer.Option(
@@ -118,7 +122,7 @@ def download_assays_command(
     out_dir: Path = typer.Option(
         Path("data/assay_tables"),
         "--out-dir",
-        help="Directory for aggregated per-assay Parquet tables (one row per compound).",
+        help="Directory for per-assay Parquet tables (one row per compound).",
     ),
     force_download: bool = typer.Option(
         False,
@@ -224,13 +228,20 @@ def select_column_command(
     assays_dir: Path = typer.Option(
         Path("data/assay_tables"),
         "--assays-dir",
-        "--aggregated-dir",
-        help="Directory containing aggregated per-assay parquet tables (aid_<AID>.parquet).",
+        help="Directory containing per-assay parquet tables (aid_<AID>.parquet).",
     ),
     metadata_db: Path = typer.Option(
         Path("outputs/assay_metadata.sqlite"),
         "--metadata-db",
         help="SQLite metadata database to update with selected column and stats.",
+    ),
+    redo_existing: bool = typer.Option(
+        False,
+        "--redo-existing",
+        help=(
+            "When batching, do not skip assays that already have a selected_column "
+            "in the metadata DB (re-select existing assays)."
+        ),
     ),
 ) -> None:
     """Interactively pick a primary screening column for one or many assays."""
@@ -251,17 +262,31 @@ def select_column_command(
         typer.echo("No AIDs resolved.")
         return
 
+    # In batch modes, skip assays that already have any selection recorded
+    # in the metadata DB (including those marked as ineligible). Single-AID
+    # runs intentionally allow overriding existing selections.
+    already_selected: set[int] = set()
+    if aid is None and (from_pcassay or aids_file is not None) and not redo_existing:
+        already_selected = set(iter_assays_with_any_selection(metadata_db))
+
     console.line()  # Spacer above progress bar
     with Progress(*PROGRESS_COLUMNS, **PROGRESS_OPTS) as progress:
+        progress.stop()  # Control when the bar is drawn.
         task_id = progress.add_task("Selecting columns", total=len(aids))
         for current_aid in aids:
             progress.update(task_id, description=f"AID {current_aid}")
 
+            if current_aid in already_selected:
+                progress.advance(task_id)
+                _render_progress_once(progress)
+                continue
+
             try:
                 result = interactive_select_for_aid(
                     aid=current_aid,
-                    aggregated_parquet=_aggregated_path(assays_dir, current_aid),
+                    assay_parquet=assay_table_path(assays_dir, current_aid),
                     metadata_db=metadata_db,
+                    io_console=console,
                 )
             except FileNotFoundError as exc:
                 typer.echo(str(exc))
@@ -279,7 +304,9 @@ def select_column_command(
                 typer.echo("No selection recorded for this AID (skipped).")
 
             progress.advance(task_id)
+            _render_progress_once(progress)
         progress.update(task_id, description="[green]All selections processed")
+        _render_progress_once(progress)
     console.line()  # Spacer below progress bar
 
 
@@ -290,11 +317,10 @@ def compute_rscores_command(
         "--metadata-db",
         help="SQLite metadata database containing selected columns and stats.",
     ),
-    aggregated_dir: Path = typer.Option(
+    assay_dir: Path = typer.Option(
         Path("data/assay_tables"),
-        "--aggregated-dir",
         "--assays-dir",
-        help="Directory containing aggregated per-assay parquet tables (aid_<AID>.parquet).",
+        help="Directory containing per-assay parquet tables (aid_<AID>.parquet).",
     ),
     out_parquet: Path = typer.Option(
         Path("outputs/assay_rscores.parquet"),
@@ -303,11 +329,45 @@ def compute_rscores_command(
     ),
 ) -> None:
     """Compute r-scores for all assays with a selected column."""
-    compute_rscores_from_metadata(
-        metadata_db=metadata_db,
-        aggregated_dir=aggregated_dir,
-        output_parquet=out_parquet,
-    )
+    rows = list(iter_selected_for_rscores(metadata_db))
+    if not rows:
+        typer.echo("No assays with selected_column to compute r-scores.")
+        return
+
+    outputs: list[pl.DataFrame] = []
+
+    console.line()  # Spacer above progress bar
+    with Progress(*PROGRESS_COLUMNS, **PROGRESS_OPTS) as progress:
+        task_id = progress.add_task("Computing r-scores", total=len(rows))
+        for aid, selected_column, median, mad in rows:
+            progress.update(task_id, description=f"AID {aid}")
+            assay_path = assay_table_path(assay_dir, aid)
+            df = compute_rscores_for_assay(
+                aid=aid,
+                assay_parquet=assay_path,
+                selected_column=selected_column,
+                median=median,
+                mad=mad,
+            )
+            outputs.append(df)
+            progress.advance(task_id)
+        progress.update(task_id, description="[green]All r-scores computed")
+    console.line()  # Spacer below progress bar
+
+    typer.echo(f"Joining r-score tables and writing to {out_parquet}...")
+    if outputs:
+        result = pl.concat(outputs, how="diagonal")
+    else:
+        result = pl.DataFrame(
+            {
+                "assay_id": pl.Series([], dtype=pl.Int64),
+                "compound_id": pl.Series([], dtype=pl.Int64),
+                "smiles": pl.Series([], dtype=pl.String),
+                "r_score": pl.Series([], dtype=pl.Float64),
+            }
+        )
+    out_parquet.parent.mkdir(parents=True, exist_ok=True)
+    result.write_parquet(out_parquet)
     typer.echo(f"Wrote r-score table to {out_parquet}")
 
 
@@ -318,11 +378,10 @@ def update_selected_stats_command(
         "--metadata-db",
         help="Metadata SQLite DB containing selected columns (will be updated with stats).",
     ),
-    aggregated_dir: Path = typer.Option(
+    assay_dir: Path = typer.Option(
         Path("data/assay_tables"),
-        "--aggregated-dir",
         "--assays-dir",
-        help="Directory containing aggregated per-assay parquet tables (aid_<AID>.parquet).",
+        help="Directory containing per-assay parquet tables (aid_<AID>.parquet).",
     ),
 ) -> None:
     """Compute stats for already-selected columns and update metadata DB."""
@@ -338,12 +397,12 @@ def update_selected_stats_command(
         task_id = progress.add_task("Updating stats", total=len(rows))
         for aid, selected_column in rows:
             progress.update(task_id, description=f"AID {aid}")
-            agg_path = _aggregated_path(aggregated_dir, aid)
-            if not agg_path.exists():
-                typer.echo(f"[skip] Aggregated parquet missing for AID {aid}: {agg_path}")
+            assay_path = assay_table_path(assay_dir, aid)
+            if not assay_path.exists():
+                typer.echo(f"[skip] Assay table parquet missing for AID {aid}: {assay_path}")
                 progress.advance(task_id)
                 continue
-            row_count, stats = _compute_candidate_stats(aggregated_parquet=agg_path)
+            row_count, stats = _compute_candidate_stats(assay_parquet=assay_path)
             match = next((c for c in stats if c.column_name == selected_column), None)
             if match is None:
                 typer.echo(
@@ -351,6 +410,7 @@ def update_selected_stats_command(
                 )
                 progress.advance(task_id)
                 continue
+
             update_metadata_row_with_stats(
                 metadata_db=metadata_db,
                 aid=aid,
@@ -438,6 +498,30 @@ def annotate_metadata_command(
         "--start-aid",
         help="Optional minimum AID; skip anything below this when annotating all.",
     ),
+    skip_hd3_annotated: bool = typer.Option(
+        False,
+        "--skip-hd3-annotated",
+        help=(
+            "When iterating multiple assays, skip those that already have a Hit Dexter "
+            "annotation present in hd3_annotations.csv."
+        ),
+    ),
+    hd3_annotations: Path = typer.Option(
+        Path("data/hd3_annotations.csv"),
+        "--hd3-annotations",
+        help=(
+            "Path to hd3_annotations.csv used to determine which assays already have "
+            "Hit Dexter annotations when --skip-hd3-annotated is set."
+        ),
+    ),
+    redo_existing: bool = typer.Option(
+        False,
+        "--redo-existing",
+        help=(
+            "Include assays that already have target_type/bioactivity_type annotations in "
+            "the metadata DB (re-annotate existing entries, still excluding ineligible assays)."
+        ),
+    ),
 ) -> None:
     """Manually annotate target_type/bioactivity_type for assays with selections (use --from-pcassay to iterate all missing)."""
     if aid is not None and from_pcassay:
@@ -466,11 +550,15 @@ def annotate_metadata_command(
             aids_file=aids_file,
             pcassay_result=pcassay_result,
         )
+        if skip_hd3_annotated:
+            annotated_aids = load_hd3_annotated_aids(hd3_annotations)
+            aids = [a for a in aids if a not in annotated_aids]
+
         contexts = iter_annotation_contexts(
             metadata_db=metadata_db,
             aids=aids,
             start_aid=start_aid,
-            include_annotated=False,
+            include_annotated=redo_existing,
         )
         if not contexts:
             typer.echo("No assays require manual annotation.")
@@ -478,6 +566,7 @@ def annotate_metadata_command(
 
         console.line()  # Spacer above progress bar
         with Progress(*PROGRESS_COLUMNS, **PROGRESS_OPTS) as progress:
+            progress.stop()  # Control rendering manually.
             task_id = progress.add_task("Annotating assays", total=len(contexts))
             for idx, ctx in enumerate(contexts, start=1):
                 progress.update(task_id, description=f"Annotating AID {ctx.aid}")
@@ -487,9 +576,12 @@ def annotate_metadata_command(
                     client=client,
                     index=idx,
                     total=len(contexts),
+                    io_console=console,
                 )
                 progress.advance(task_id)
+                _render_progress_once(progress)
             progress.update(task_id, description="[green]All annotations processed")
+            _render_progress_once(progress)
         console.line()  # Spacer below progress bar
     finally:
         client.close()

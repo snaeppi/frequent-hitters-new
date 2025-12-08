@@ -38,7 +38,6 @@ class GlobalConfig:
     metrics_classification: list[str]
     metrics_regression: list[str]
     chemprop_train_cmd: str
-    chemprop_predict_cmd: str
     submit: bool
     dataset_aliases: dict[str, Path] = field(default_factory=dict)
     extra_header_directives: list[str] = field(default_factory=list)
@@ -96,7 +95,6 @@ def _parse_global_config(raw: dict, base_path: Path) -> GlobalConfig:
         ],
         metrics_regression=[str(m) for m in raw.get("regression_metrics", ["rmse", "mae", "r2"])],
         chemprop_train_cmd=str(raw.get("chemprop_train_cmd", "chemprop train")),
-        chemprop_predict_cmd=str(raw.get("chemprop_predict_cmd", "chemprop predict")),
         submit=bool(raw.get("submit", True)),
         dataset_aliases=dataset_aliases,
         extra_header_directives=[str(d) for d in raw.get("extra_directives", [])],

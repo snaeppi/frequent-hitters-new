@@ -113,6 +113,12 @@ def _load_hd3_annotations(path: Path) -> dict[int, set[str]]:
     return records
 
 
+def load_hd3_annotated_aids(path: Path) -> set[int]:
+    """Return the set of AIDs that have any Hit Dexter annotation."""
+    records = _load_hd3_annotations(path)
+    return set(records.keys())
+
+
 def build_initial_metadata(
     *,
     pcassay_result: Path,

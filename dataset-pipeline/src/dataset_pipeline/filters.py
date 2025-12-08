@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 
@@ -97,9 +98,9 @@ def apply_assay_filters(
 
     assay_metadata = assay_metadata.with_columns(
         [
-            (
-                pl.col("excluded_due_to_min_screens") | pl.col("excluded_due_to_hit_rate")
-            ).alias("excluded_flag"),
+            (pl.col("excluded_due_to_min_screens") | pl.col("excluded_due_to_hit_rate")).alias(
+                "excluded_flag"
+            ),
             pl.when(pl.col("excluded_due_to_min_screens"))
             .then(pl.lit("min_screens"))
             .when(pl.col("excluded_due_to_hit_rate") & outlier_expr)
@@ -120,16 +121,27 @@ def apply_assay_filters(
     retained_ids_df = retained_assays.select("assay_id")
     filtered_lf = data_lf.join(retained_ids_df.lazy(), on="assay_id", how="inner")
 
+    excluded_due_to_hit_rate = int(assay_metadata.filter(pl.col("excluded_due_to_hit_rate")).height)
+    excluded_due_to_min_screens = int(
+        assay_metadata.filter(pl.col("excluded_due_to_min_screens")).height
+    )
+
     stats = {
         "mean_hit_rate": mean_hit_rate,
         "std_hit_rate": std_hit_rate,
         "threshold_hit_rate": threshold,
-        "eligible_assays": int(eligible_assays.height),
         "min_screens_per_assay": int(min_screens_per_assay),
-        "assays_after_hit_rate_filter": int(assays_after_hit_rate.height),
+        "assays_total": int(assay_metadata.height),
+        "assays_meeting_min_screens": int(eligible_assays.height),
+        "assays_not_hit_rate_outlier": int(assays_after_hit_rate.height),
         "assays_retained": int(retained_assays.height),
         "assays_excluded": int(excluded_assays.height),
+        "assays_excluded_due_to_hit_rate": excluded_due_to_hit_rate,
+        "assays_excluded_due_to_min_screens": excluded_due_to_min_screens,
     }
+
+    stats_path = output_dir / "assay_filter_stats.json"
+    stats_path.write_text(json.dumps(stats, indent=2), encoding="utf-8")
 
     if enable_plots:
         plot_dir = output_dir / PLOT_DIRNAME

@@ -90,7 +90,7 @@ Key options:
 - `--pcassay-result PATH` (default `data/pcassay_result.txt`)
 
 - `--out-dir PATH` (default `data/assay_tables`)  
-  Where aggregated `aid_<AID>.parquet` files will be written.
+  Where per-assay `aid_<AID>.parquet` tables (one row per compound) will be written.
 
 - `--force-download/--no-force-download`  
   Re‑download even if the parquet already exists.
@@ -99,11 +99,11 @@ Key options:
   Concurrent download threads.
 
 - `--cpu-workers INT` (default 4)  
-  Concurrent processing workers for CSV → aggregated parquet.
+  Concurrent processing workers for CSV → per-assay parquet tables.
 
 Output:
 
-- `data/assay_tables/aid_<AID>.parquet` – aggregated per-assay table (one row per compound).
+- `data/assay_tables/aid_<AID>.parquet` – per-assay table (one row per compound).
 
 Example (single AID):
 
@@ -172,14 +172,19 @@ Key options:
   Skip any AIDs below this numeric value when batching.
 
 - `--assays-dir PATH` (default `data/assay_tables`)  
-  Directory containing aggregated `aid_<AID>.parquet` files (output of `download-assays`). `--aggregated-dir` is an alias.
+  Directory containing per-assay `aid_<AID>.parquet` tables (output of `download-assays`).
 
 - `--metadata-db PATH` (default `outputs/assay_metadata.sqlite`)  
   Metadata SQLite DB to update with `selected_column` and stats.
 
+- `--redo-existing` (optional)  
+  When batching (`--from-pcassay` / `--aids-file`), do not skip assays that already
+  have a `selected_column` in the metadata DB – useful for starting column selection
+  from scratch using an existing DB.
+
 Behavior:
 
-- Loads the aggregated parquet for the AID (one row per compound).
+- Loads the per-assay parquet table for the AID (one row per compound).
 - Detects candidate numeric columns (drops most `PUBCHEM_*` metadata).
 - Detects replicate groups like `REPLICATE_A_...`, `REPLICATE_B_...` and writes mean columns such as `_ACTIVITY_SCORE_12.5uM_(%)_mean`.
 - For each candidate column, computes:
@@ -190,12 +195,15 @@ Behavior:
   - `hits_overlap` – r‑score hits that are also outcome “Active”
   - `hits_outcome` – outcome‑based actives
 - Shows a table and highlights the column with highest `hits_overlap` (ties broken by coverage).
-- Prompts:
-  - Enter index to pick a specific column.
-  - Press Enter to pick the highlighted best.
-  - `s` to skip.
-  - `i` to mark the assay as ineligible (`selected_column="__INELIGIBLE__"`).
+  - Prompts:
+    - Enter index to pick a specific column.
+    - Press Enter to pick the highlighted best.
+    - `s` to skip.
+    - `i` to mark the assay as ineligible (`selected_column="__INELIGIBLE__"`).
 - Writes the choice and all stats into the metadata DB.
+- In batch modes (`--from-pcassay` / `--aids-file`), assays that already have any
+  non‑empty `selected_column` recorded in the metadata DB (including those marked
+  as ineligible) are skipped silently unless `--redo-existing` is set.
 
 Example (single):
 
@@ -223,13 +231,13 @@ Key options:
 - `--metadata-db PATH` (default `outputs/assay_metadata.sqlite`)  
   Must contain `aid` and `selected_column`.
 
-- `--aggregated-dir PATH` (default `data/assay_tables`)  
-  Location of aggregated `aid_<AID>.parquet` tables (`--assays-dir` alias).
+- `--assays-dir PATH` (default `data/assay_tables`)  
+  Location of per-assay `aid_<AID>.parquet` tables.
 
 Behavior:
 
 - For each row where `selected_column` is non‑empty and not `"__INELIGIBLE__"`:
-  - Loads the aggregated parquet for that AID.
+  - Loads the per-assay parquet table for that AID.
   - Locates the candidate stats for the selected column.
   - Updates the metadata row in SQLite with:
     - `median`, `mad`
@@ -252,15 +260,15 @@ Key options:
 - `--metadata-db PATH` (default `outputs/assay_metadata.sqlite`)  
   Must contain `aid`, `selected_column`, and optionally `median`, `mad`.
 
-- `--aggregated-dir PATH` (default `data/assay_tables`)  
-  Directory with aggregated `aid_<AID>.parquet` files (`--assays-dir` alias).
+- `--assays-dir PATH` (default `data/assay_tables`)  
+  Directory with per-assay `aid_<AID>.parquet` tables.
 
 - `--out PATH` (default `outputs/assay_rscores.parquet`)
 
 Behavior:
 
 - For each row where `selected_column` is non‑empty and not `"__INELIGIBLE__"`:
-  - Loads the aggregated parquet.
+  - Loads the per-assay parquet table.
   - If `median`/`mad` are missing, computes them on the fly from the selected column.
   - Computes `r_score = (value - median) / (mad * 1.4826)` (no further transforms).
   - Outputs one row per compound with:
@@ -314,6 +322,18 @@ Use this after running `select-column` or `update-selected-stats` if you want an
 
 Interactively assign `target_type` / `bioactivity_type` for assays with a selected column but no existing annotation (and not marked ineligible). Descriptions are shown in a pager so you can scroll before choosing labels.
 
+Target Type definitions:
+
+- **target-based assay:** readouts from purified proteins or peptides (biochemical preparations).
+- **cell-based assay:** readouts from intact cells.
+- **other:** tissue-based or organism-based assays not covered above.
+
+Bioactivity Type definitions:
+
+- **specific bioactivity:** measures a specific biological property such as enzyme activity; excludes cytotoxicity.
+- **nonspecific bioactivity:** measures cell growth, viability, cytotoxicity, or other nonspecific effects.
+- **other:** physicochemical processes, DNA/RNA binding, or measurements outside biological activity.
+
 ```bash
 assay-etl annotate-metadata [OPTIONS]
 ```
@@ -338,6 +358,19 @@ Key options:
 - `--start-aid INT` (optional)  
   Skip any AIDs below this numeric value when iterating all (use with `--from-pcassay`).
 
+- `--skip-hd3-annotated` (optional)  
+  When iterating multiple assays (via `--from-pcassay` / `--aids-file`), skip those
+  that already have any Hit Dexter annotation present in `hd3_annotations.csv`.
+
+- `--hd3-annotations PATH` (default `data/hd3_annotations.csv`)  
+  Path to the Hit Dexter annotations CSV used together with `--skip-hd3-annotated`.
+
+- `--redo-existing` (optional)  
+  Include assays that already have `target_type` / `bioactivity_type` filled in the
+  metadata DB and re-run manual annotation for them (still excludes assays marked
+  as ineligible). Combined with `--skip-hd3-annotated`, this lets you re-do only
+  the non–Hit Dexter annotations while trusting the HD3 labels.
+
 Behavior:
 
 - Finds assays where:
@@ -359,9 +392,7 @@ Behavior:
 Below is a concrete sequence for one assay (e.g. AID 588334):
 
 ```bash
-cd minimal
-
-# 1. Download aggregated assay table
+# 1. Download per-assay table
 assay-etl download-assays --aid 588334
 
 # 2. Build or refresh metadata

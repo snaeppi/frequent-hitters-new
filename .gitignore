@@ -63,3 +63,4 @@ model-jobs/scripts/
 assay-etl/data/assay_tables/
 assay-etl/outputs/aggregated/
 assay-etl/outputs/assay_rscores.parquet
+/data/

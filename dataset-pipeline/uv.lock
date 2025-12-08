@@ -99,6 +99,37 @@ wheels = [
 ]
 
 [[package]]
+name = "dataset-pipeline"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "hydra-core" },
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "polars" },
+    { name = "rdkit" },
+    { name = "rich" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "hydra-core", specifier = ">=1.3.2" },
+    { name = "matplotlib", specifier = ">=3.8.0" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.9" },
+    { name = "numpy", specifier = ">=1.26.0" },
+    { name = "polars", specifier = ">=0.20.0" },
+    { name = "rdkit", specifier = ">=2023.9.5" },
+    { name = "rich", specifier = ">=14.2.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
+]
+
+[[package]]
 name = "fonttools"
 version = "4.61.0"
 source = { registry = "https://pypi.org/simple" }
@@ -315,6 +346,18 @@ wheels = [
 ]
 
 [[package]]
+name = "markdown-it-py"
+version = "4.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mdurl" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5b/f5/4ec618ed16cc4f8fb3b701563655a69816155e79e24a17b651541804721d/markdown_it_py-4.0.0.tar.gz", hash = "sha256:cb0a2b4aa34f932c007117b194e945bd74e0ec24133ceb5bac59009cda1cb9f3", size = 73070 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/94/54/e7d793b573f298e1c9013b8c4dade17d481164aa517d1d7148619c2cedbf/markdown_it_py-4.0.0-py3-none-any.whl", hash = "sha256:87327c59b172c5011896038353a81343b6754500a08cd7a4973bb48c6d578147", size = 87321 },
+]
+
+[[package]]
 name = "matplotlib"
 version = "3.10.7"
 source = { registry = "https://pypi.org/simple" }
@@ -376,6 +419,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/58/8f/76d5dc21ac64a49e5498d7f0472c0781dae442dd266a67458baec38288ec/matplotlib-3.10.7-pp311-pypy311_pp73-macosx_10_15_x86_64.whl", hash = "sha256:15112bcbaef211bd663fa935ec33313b948e214454d949b723998a43357b17b0", size = 8252283 },
     { url = "https://files.pythonhosted.org/packages/27/0d/9c5d4c2317feb31d819e38c9f947c942f42ebd4eb935fc6fd3518a11eaa7/matplotlib-3.10.7-pp311-pypy311_pp73-macosx_11_0_arm64.whl", hash = "sha256:d2a959c640cdeecdd2ec3136e8ea0441da59bcaf58d67e9c590740addba2cb68", size = 8116733 },
     { url = "https://files.pythonhosted.org/packages/9a/cc/3fe688ff1355010937713164caacf9ed443675ac48a997bab6ed23b3f7c0/matplotlib-3.10.7-pp311-pypy311_pp73-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:3886e47f64611046bc1db523a09dd0a0a6bed6081e6f90e13806dd1d1d1b5e91", size = 8693919 },
+]
+
+[[package]]
+name = "mdurl"
+version = "0.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979 },
 ]
 
 [[package]]
@@ -626,35 +678,6 @@ wheels = [
 ]
 
 [[package]]
-name = "dataset-pipeline"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "hydra-core" },
-    { name = "matplotlib" },
-    { name = "numpy" },
-    { name = "polars" },
-    { name = "rdkit" },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "mypy" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "hydra-core", specifier = ">=1.3.2" },
-    { name = "matplotlib", specifier = ">=3.8.0" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.9" },
-    { name = "numpy", specifier = ">=1.26.0" },
-    { name = "polars", specifier = ">=0.20.0" },
-    { name = "rdkit", specifier = ">=2023.9.5" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
-]
-
-[[package]]
 name = "polars"
 version = "1.35.2"
 source = { registry = "https://pypi.org/simple" }
@@ -678,6 +701,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/67/89/e09d9897a70b607e22a36c9eae85a5b829581108fd1e3d4292e5c0f52939/polars_runtime_32-1.35.2-cp39-abi3-manylinux_2_24_aarch64.whl", hash = "sha256:3b9006902fc51b768ff747c0f74bd4ce04005ee8aeb290ce9c07ce1cbe1b58a9", size = 37850590 },
     { url = "https://files.pythonhosted.org/packages/dc/40/96a808ca5cc8707894e196315227f04a0c82136b7fb25570bc51ea33b88d/polars_runtime_32-1.35.2-cp39-abi3-win_amd64.whl", hash = "sha256:ddc015fac39735592e2e7c834c02193ba4d257bb4c8c7478b9ebe440b0756b84", size = 41290019 },
     { url = "https://files.pythonhosted.org/packages/f4/d1/8d1b28d007da43c750367c8bf5cb0f22758c16b1104b2b73b9acadb2d17a/polars_runtime_32-1.35.2-cp39-abi3-win_arm64.whl", hash = "sha256:6861145aa321a44eda7cc6694fb7751cb7aa0f21026df51b5faa52e64f9dc39b", size = 36955684 },
+]
+
+[[package]]
+name = "pygments"
+version = "2.19.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b0/77/a5b8c569bf593b0140bde72ea885a803b82086995367bf2037de0159d924/pygments-2.19.2.tar.gz", hash = "sha256:636cb2477cec7f8952536970bc533bc43743542f70392ae026374600add5b887", size = 4968631 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c7/21/705964c7812476f378728bdf590ca4b771ec72385c533964653c68e86bdc/pygments-2.19.2-py3-none-any.whl", hash = "sha256:86540386c03d588bb81d44bc3928634ff26449851e99741617ecb9037ee5ec0b", size = 1225217 },
 ]
 
 [[package]]
@@ -785,6 +817,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/21/25/1999480b5239ac0cf714ef71adad11abc8e091130d69f59f1b631790f85d/rdkit-2025.9.3-cp314-cp314-manylinux_2_28_aarch64.whl", hash = "sha256:e5266f9fa5d8c6f63200edd6d8159d33adf3d7532e885677d748c02427b28764", size = 34885860 },
     { url = "https://files.pythonhosted.org/packages/ec/b3/41186ad8118e3b7ebe9250eddfb0b45699737c8f0aaa69dc5b3d0edf9e4f/rdkit-2025.9.3-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:6aae71e6a3407b9b099496999634692e538c5936b5a3a8e034d44c5f2bcd9108", size = 36376596 },
     { url = "https://files.pythonhosted.org/packages/3d/06/e3f8a71cd0a1ed50013789a96eab544a198cc7e4c55afffe7fc8654a5a98/rdkit-2025.9.3-cp314-cp314-win_amd64.whl", hash = "sha256:f47da0c0e138aaf0a0f0a8f1e2ecf35c0483fd037e1fe620af0d2cff6e5f778a", size = 24162376 },
+]
+
+[[package]]
+name = "rich"
+version = "14.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "markdown-it-py" },
+    { name = "pygments" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fb/d2/8920e102050a0de7bfabeb4c4614a49248cf8d5d7a8d01885fbb24dc767a/rich-14.2.0.tar.gz", hash = "sha256:73ff50c7c0c1c77c8243079283f4edb376f0f6442433aecb8ce7e6d0b92d1fe4", size = 219990 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/25/7a/b0178788f8dc6cafce37a212c99565fa1fe7872c70c6c9c1e1a372d9d88f/rich-14.2.0-py3-none-any.whl", hash = "sha256:76bc51fe2e57d2b1be1f96c524b890b816e334ab4c1e45888799bfaab0021edd", size = 243393 },
 ]
 
 [[package]]

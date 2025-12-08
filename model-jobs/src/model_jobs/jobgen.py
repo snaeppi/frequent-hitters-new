@@ -28,7 +28,6 @@ class BaseGlobalConfig(Protocol):
     metrics_classification: list[str]
     metrics_regression: list[str]
     chemprop_train_cmd: str
-    chemprop_predict_cmd: str
     submit: bool
     dataset_aliases: dict[str, Path]
     base_path: Path
@@ -41,20 +40,6 @@ GC = TypeVar("GC", bound=BaseGlobalConfig)
 class Renderers:
     header: Callable[[str, GC], str]
     common_env: Callable[[GC, str], str]
-
-
-@dataclass
-class PredictionSet:
-    name: str
-    input_path: Path
-    preds_path: Path
-    filters: list[str] = field(default_factory=list)
-    compound_min_screens: float | None = None
-    compound_screens_column: str = "screens"
-
-    @property
-    def slug(self) -> str:
-        return _slugify(self.name)
 
 
 @dataclass
@@ -105,7 +90,7 @@ def _load_submission_plan(
         elif task_type_normalized in {"threshold", "threshold_classification"}:
             job_defs = _build_threshold_jobs(entry, global_cfg, renderers)
         elif task_type_normalized in {"predict", "prediction"}:
-            job_defs = _build_prediction_jobs(entry, global_cfg, renderers)
+            raise ConfigError("Prediction-only tasks are no longer supported; include splits in the training dataset instead.")
         else:
             raise ConfigError(f"Unknown task type '{task_type}'.")
 
@@ -159,81 +144,14 @@ def _format_model_dir(
     return _resolve_path(formatted, global_cfg.base_path)
 
 
-def _collect_prediction_sets(
-    task: dict,
-    model_dir: Path,
-    global_cfg: BaseGlobalConfig,
-    default_sets: list[tuple[str, str | Path]] | None = None,
-) -> list[PredictionSet]:
-    prediction_sets: list[PredictionSet] = []
-    default_min = task.get("prediction_compound_min_screens")
-    default_screens_column = task.get(
-        "prediction_compound_screens_column",
-        task.get("compound_screens_column", "screens"),
-    )
-    if default_screens_column is None:
-        default_screens_column = "screens"
-    default_screens_column = str(default_screens_column)
-
-    def _coerce_min(value: object | None) -> float | None:
-        if value is None:
-            return None
-        return float(value)
-
-    default_min_value = _coerce_min(default_min)
-
-    if default_sets:
-        for name, path_value in default_sets:
-            dataset_path = _resolve_dataset_path(path_value, global_cfg, f"{name}_path")
-            preds_path = model_dir / "predictions" / f"{_slugify(name)}_preds.csv"
-            prediction_sets.append(
-                PredictionSet(
-                    name=name,
-                    input_path=dataset_path,
-                    preds_path=preds_path,
-                    filters=[],
-                    compound_min_screens=default_min_value,
-                    compound_screens_column=default_screens_column,
-                )
-            )
-
-    for spec in task.get("prediction_sets", []):
-        if not isinstance(spec, dict):
-            raise ConfigError("prediction_sets entries must be mappings.")
-        name = spec.get("name")
-        if not name:
-            raise ConfigError("prediction_sets entry missing 'name'.")
-        dataset_path = _resolve_dataset_path(
-            spec.get("input_path"), global_cfg, f"prediction_sets[{name}].input_path"
-        )
-        preds_value = spec.get("output_path")
-        if preds_value:
-            preds_path = _resolve_path(preds_value, global_cfg.base_path)
-        else:
-            preds_path = model_dir / "predictions" / f"{_slugify(name)}_preds.csv"
-        filters_raw = spec.get("filters", [])
-        if isinstance(filters_raw, dict):
-            filters_list = [f"{key}={value}" for key, value in filters_raw.items()]
-        else:
-            filters_list = [str(v) for v in filters_raw]
-        set_min = spec.get("compound_min_screens")
-        set_screens_column = spec.get("compound_screens_column", default_screens_column)
-        if set_screens_column is None:
-            set_screens_column = default_screens_column
-        prediction_sets.append(
-            PredictionSet(
-                name=str(name),
-                input_path=dataset_path,
-                preds_path=preds_path,
-                filters=filters_list,
-                compound_min_screens=_coerce_min(set_min)
-                if set_min is not None
-                else default_min_value,
-                compound_screens_column=str(set_screens_column),
-            )
-        )
-
-    return prediction_sets
+def _split_column_from_task(task: dict, *, default_seed: int) -> str:
+    """Return the split column to use for a task, defaulting to the task seed."""
+    split_override = task.get("split_column")
+    if split_override:
+        return str(split_override)
+    seed_override = task.get("split_seed")
+    seed_value = default_seed if seed_override is None else int(seed_override)
+    return f"split{seed_value}"
 
 
 # ---------------------------------------------------------------------------
@@ -246,14 +164,14 @@ def _build_multilabel_jobs(task: dict, global_cfg: GC, renderers: Renderers) -> 
     job_slug = _slugify(job_name)
 
     trainval_path = _resolve_dataset_path(task.get("trainval_path"), global_cfg, "trainval_path")
-    keep_columns = ["smiles", "split"]
-    keep_columns.extend(task.get("extra_keep_columns", []))
-    keep_columns = list(dict.fromkeys(map(str, keep_columns)))
     epochs = int(task.get("epochs", global_cfg.epochs))
     seed = int(task.get("seed", global_cfg.seed))
+    split_seed_value = int(task.get("split_seed", seed))
+    split_column = _split_column_from_task(task, default_seed=seed)
+    keep_columns = ["smiles", split_column]
+    keep_columns.extend(task.get("extra_keep_columns", []))
+    keep_columns = list(dict.fromkeys(map(str, keep_columns)))
     ensemble_size = int(task.get("ensemble_size", 1))
-    predict_cal = bool(task.get("predict_calibration", True))
-    predict_test = bool(task.get("predict_test", False))
 
     model_context = {
         "job_name": job_name,
@@ -261,22 +179,13 @@ def _build_multilabel_jobs(task: dict, global_cfg: GC, renderers: Renderers) -> 
     }
     model_dir = _format_model_dir(task.get("model_dir"), global_cfg, model_context)
 
-    default_prediction_sets: list[tuple[str, str | Path]] = []
-    if predict_cal:
-        default_prediction_sets.append(("calibration", task.get("calibration_path")))
-    if predict_test:
-        default_prediction_sets.append(("test", task.get("test_path")))
-
-    prediction_sets = _collect_prediction_sets(task, model_dir, global_cfg, default_prediction_sets)
-
     submit_flag = _should_submit(task, global_cfg)
     content = _render_multilabel_script(
         job_name=job_name,
         job_slug=job_slug,
-        trainval_path=trainval_path,
+        data_path=trainval_path,
         model_dir=model_dir,
         keep_columns=keep_columns,
-        prediction_sets=prediction_sets,
         global_cfg=global_cfg,
         epochs=epochs,
         seed=seed,
@@ -285,6 +194,7 @@ def _build_multilabel_jobs(task: dict, global_cfg: GC, renderers: Renderers) -> 
         classification_metrics=_task_metrics(
             task, "classification_metrics", global_cfg.metrics_classification
         ),
+        split_column=split_column,
         renderers=renderers,
     )
     filename = f"{job_slug}.sh"
@@ -304,14 +214,16 @@ def _build_regression_jobs(task: dict, global_cfg: GC, renderers: Renderers) -> 
     else:
         target = task.get("target_column")
         if not target:
-            raise ConfigError("Regression task requires 'target_column' or 'targets'.")
+            seed = int(task.get("seed", global_cfg.seed))
+            split_seed_value = int(task.get("split_seed", seed))
+            target = f"score_seed{split_seed_value}"
         targets_list = [str(target)]
 
     epochs = int(task.get("epochs", global_cfg.epochs))
     seed = int(task.get("seed", global_cfg.seed))
+    split_seed_value = int(task.get("split_seed", seed))
+    split_column = _split_column_from_task(task, default_seed=seed)
     ensemble_size = int(task.get("ensemble_size", 1))
-    predict_cal = bool(task.get("predict_calibration", True))
-    predict_test = bool(task.get("predict_test", False))
     compound_min = task.get("compound_min_screens")
     compound_min_value = float(compound_min) if compound_min is not None else None
     compound_screens_column = task.get("compound_screens_column", "screens")
@@ -332,25 +244,14 @@ def _build_regression_jobs(task: dict, global_cfg: GC, renderers: Renderers) -> 
         }
         model_dir = _format_model_dir(task.get("model_dir"), global_cfg, context)
 
-        default_prediction_sets: list[tuple[str, str | Path]] = []
-        if predict_cal:
-            default_prediction_sets.append(("calibration", task.get("calibration_path")))
-        if predict_test:
-            default_prediction_sets.append(("test", task.get("test_path")))
-
-        prediction_sets = _collect_prediction_sets(
-            task, model_dir, global_cfg, default_prediction_sets
-        )
-
         submit_flag = _should_submit(task, global_cfg)
         content = _render_regression_script(
             job_name=per_job_name,
             job_slug=per_slug,
-            trainval_path=trainval_path,
+            data_path=trainval_path,
             model_dir=model_dir,
             target_column=target,
             task_type=task_type,
-            prediction_sets=prediction_sets,
             global_cfg=global_cfg,
             epochs=epochs,
             seed=seed,
@@ -359,6 +260,7 @@ def _build_regression_jobs(task: dict, global_cfg: GC, renderers: Renderers) -> 
             regression_metrics=_regression_metrics(task, global_cfg),
             compound_min_screens=compound_min_value,
             compound_screens_column=compound_screens_column,
+            split_column=split_column,
             renderers=renderers,
         )
         filename = f"{per_slug}.sh"
@@ -371,12 +273,13 @@ def _build_threshold_jobs(task: dict, global_cfg: GC, renderers: Renderers) -> l
     job_name = _extract_job_name(task)
     job_slug = _slugify(job_name)
     trainval_path = _resolve_dataset_path(task.get("trainval_path"), global_cfg, "trainval_path")
-    metric_column = str(task.get("metric_column", "score"))
-    target_column = str(task.get("target_column", "target"))
-    predict_cal = bool(task.get("predict_calibration", True))
-    predict_test = bool(task.get("predict_test", False))
-    epochs = int(task.get("epochs", global_cfg.epochs))
     seed = int(task.get("seed", global_cfg.seed))
+    split_seed_value = int(task.get("split_seed", seed))
+    metric_default = f"score_seed{split_seed_value}"
+    metric_column = str(task.get("metric_column", metric_default))
+    target_column = str(task.get("target_column", "target"))
+    epochs = int(task.get("epochs", global_cfg.epochs))
+    split_column = _split_column_from_task(task, default_seed=seed)
     ensemble_size = int(task.get("ensemble_size", 1))
     compound_min = task.get("compound_min_screens")
     compound_min_value = float(compound_min) if compound_min is not None else None
@@ -426,15 +329,6 @@ def _build_threshold_jobs(task: dict, global_cfg: GC, renderers: Renderers) -> l
         }
         model_dir = _format_model_dir(task.get("model_dir"), global_cfg, context)
 
-        default_prediction_sets: list[tuple[str, str | Path]] = []
-        if predict_cal:
-            default_prediction_sets.append(("calibration", task.get("calibration_path")))
-        if predict_test:
-            default_prediction_sets.append(("test", task.get("test_path")))
-        prediction_sets = _collect_prediction_sets(
-            task, model_dir, global_cfg, default_prediction_sets
-        )
-
         threshold_args = _threshold_arguments(
             lower_percentile=lower_percentile,
             upper_percentile=upper_percentile,
@@ -448,11 +342,10 @@ def _build_threshold_jobs(task: dict, global_cfg: GC, renderers: Renderers) -> l
         content = _render_threshold_script(
             job_name=per_job_name,
             job_slug=per_slug,
-            trainval_path=trainval_path,
+            data_path=trainval_path,
             model_dir=model_dir,
             metric_column=metric_column,
             target_column=target_column,
-            prediction_sets=prediction_sets,
             global_cfg=global_cfg,
             epochs=epochs,
             seed=seed,
@@ -464,6 +357,7 @@ def _build_threshold_jobs(task: dict, global_cfg: GC, renderers: Renderers) -> l
             ),
             compound_min_screens=compound_min_value,
             compound_screens_column=compound_screens_column,
+            split_column=split_column,
             renderers=renderers,
         )
         filename = f"{per_slug}.sh"
@@ -473,37 +367,7 @@ def _build_threshold_jobs(task: dict, global_cfg: GC, renderers: Renderers) -> l
 
 
 def _build_prediction_jobs(task: dict, global_cfg: GC, renderers: Renderers) -> list[JobDefinition]:
-    job_name = _extract_job_name(task)
-    job_slug = _slugify(job_name)
-    model_context = {"job_name": job_name, "job_slug": job_slug}
-    model_dir = _format_model_dir(task.get("model_dir"), global_cfg, model_context)
-    model_path_value = task.get("model_path")
-    model_path = (
-        _resolve_dataset_path(model_path_value, global_cfg, "model_path")
-        if model_path_value
-        else model_dir
-    )
-
-    prediction_sets = task.get("prediction_sets")
-    if not prediction_sets:
-        raise ConfigError("Prediction-only task must provide at least one prediction_sets entry.")
-
-    prediction_set_objs = _collect_prediction_sets(
-        {"prediction_sets": prediction_sets}, model_dir, global_cfg
-    )
-    submit_flag = _should_submit(task, global_cfg)
-    content = _render_prediction_only_script(
-        job_name=job_name,
-        job_slug=job_slug,
-        model_path=model_path,
-        prediction_sets=prediction_set_objs,
-        global_cfg=global_cfg,
-        renderers=renderers,
-    )
-    filename = f"{job_slug}.sh"
-    return [
-        JobDefinition(job_name=job_name, filename=filename, content=content, submit=submit_flag)
-    ]
+    raise ConfigError("Prediction-only tasks are not supported; include predictions via splits in the training dataset.")
 
 
 def _should_submit(task: dict, global_cfg: BaseGlobalConfig) -> bool:
@@ -552,112 +416,50 @@ def _threshold_arguments(
     return args
 
 
-# ---------------------------------------------------------------------------
-# Script rendering
-# ---------------------------------------------------------------------------
-
-
-def _render_prediction_blocks(
-    prediction_sets: list[PredictionSet], global_cfg: BaseGlobalConfig, job_slug: str
-) -> str:
-    blocks: list[str] = []
-    for pred_set in prediction_sets:
-        temp_csv = f"${{TEMP_DIR}}/{job_slug}_{pred_set.slug}.csv"
-        preds_path = pred_set.preds_path
-        preds_dir_cmd = f"mkdir -p $(dirname {shlex.quote(str(preds_path))})"
-        cmd_lines = [
-            f'"${{PYTHON_BIN}}" -m model_jobs.cli prepare-smiles-csv \\',
-            f'  --input "{pred_set.input_path}" \\',
-            f'  --output "{temp_csv}" \\',
-            '  --smiles-column "smiles"',
-        ]
-        for flt in pred_set.filters:
-            cmd_lines[-1] += " \\"
-            cmd_lines.append(f"  --filter '{flt}'")
-        if pred_set.compound_min_screens is not None:
-            min_value = format(pred_set.compound_min_screens, "g")
-            cmd_lines[-1] += " \\"
-            cmd_lines.append(f"  --compound-min-screens {min_value} \\")
-            cmd_lines.append(f'  --compound-screens-column "{pred_set.compound_screens_column}"')
-        prepare_cmd = "\n".join(cmd_lines)
-
-        predict_lines = [
-            f"${{CHEMPROP_PREDICT}} \\",
-            f'  --test-path "{temp_csv}" \\',
-            f'  --preds-path "{preds_path}" \\',
-            '  --model-path "${MODEL_PATH}" \\',
-            "  --drop-extra-columns \\",
-            '  --smiles-columns "smiles" \\',
-            f"  --num-workers {global_cfg.cpus}",
-        ]
-
-        block_lines = [
-            f"echo \"[INFO] [$START] [$(date)] [$$] Preparing dataset '{pred_set.name}' for prediction\"",
-            "",
-            prepare_cmd,
-            "",
-            preds_dir_cmd,
-            "",
-            f"echo \"[INFO] [$START] [$(date)] [$$] Running Chemprop prediction for '{pred_set.name}'\"",
-            "",
-            "\n".join(predict_lines),
-            "",
-            f'rm "{temp_csv}" && echo "[INFO] [$START] [$(date)] [$$] Removed temporary file {temp_csv}"',
-        ]
-        block = "\n".join(block_lines).strip()
-        blocks.append(block)
-    return "\n\n".join(blocks)
-
-
 def _render_multilabel_script(
     *,
     job_name: str,
     job_slug: str,
-    trainval_path: Path,
+    data_path: Path,
     model_dir: Path,
     keep_columns: list[str],
-    prediction_sets: list[PredictionSet],
     global_cfg: BaseGlobalConfig,
     epochs: int,
     seed: int,
     ensemble_size: int,
     train_enabled: bool,
     classification_metrics: list[str],
+    split_column: str,
     renderers: Renderers,
 ) -> str:
     header = renderers.header(job_name, global_cfg)
     env_block = renderers.common_env(global_cfg, job_name)
 
-    keep_args = "\n".join(
-        f'          --keep-column "{col}"' for col in keep_columns if col not in {"smiles", "split"}
-    )
     temp_parquet = f"${{TEMP_DIR}}/{job_slug}_multilabel_trimmed.parquet"
+    unique_keep = list(dict.fromkeys(keep_columns))
 
     body_lines: list[str] = [
         header,
         "",
         env_block,
         "",
+        f'SPLIT_COLUMN="{split_column}"',
+        f'DATA_PATH="{data_path}"',
+        f'TEMP_PARQUET="{temp_parquet}"',
+        "",
         f'MODEL_DIR="{model_dir}"',
         'mkdir -p "${MODEL_DIR}"',
     ]
-    body_lines.append(f'TRAINVAL_PATH="{trainval_path}"')
-    body_lines.append(f'TEMP_PARQUET="{temp_parquet}"')
-    body_lines.append("")
     body_lines.append('echo "[INFO] [$START] [$(date)] [$$] Trimming multi-task dataset"')
 
-    trim_command = textwrap.dedent(
-        f"""
-        "${{PYTHON_BIN}}" -m model_jobs.cli trim-columns \\
-          --input "${{TRAINVAL_PATH}}" \\
-          --output "${{TEMP_PARQUET}}" \\
-          --keep-column "smiles" \\
-          --keep-column "split" \\
-          --keep-numeric-columns
-{keep_args}
-        """
-    ).strip()
-    body_lines.append(trim_command)
+    trim_lines = [
+        '"${PYTHON_BIN}" -m model_jobs.cli trim-columns \\',
+        '  --input "${DATA_PATH}" \\',
+        '  --output "${TEMP_PARQUET}" \\',
+    ]
+    trim_lines.extend(f'  --keep-column "{col}" \\' for col in unique_keep)
+    trim_lines.append("  --keep-numeric-columns")
+    body_lines.append("\n".join(trim_lines))
 
     if train_enabled:
         train_cmd_lines = [
@@ -667,7 +469,7 @@ def _render_multilabel_script(
             "  --task-type classification \\",
             f"  --ensemble-size {ensemble_size} \\",
             '  --smiles-columns "smiles" \\',
-            '  --splits-column "split" \\',
+            '  --splits-column "${SPLIT_COLUMN}" \\',
             f"  --epochs {epochs} \\",
             "  --show-individual-scores \\",
         ]
@@ -692,16 +494,6 @@ def _render_multilabel_script(
         ]
     )
 
-    if prediction_sets:
-        body_lines.extend(
-            [
-                "",
-                'MODEL_PATH="${MODEL_DIR}"',
-                "",
-                _render_prediction_blocks(prediction_sets, global_cfg, job_slug),
-            ]
-        )
-
     return "\n".join(body_lines).strip() + "\n"
 
 
@@ -709,11 +501,10 @@ def _render_regression_script(
     *,
     job_name: str,
     job_slug: str,
-    trainval_path: Path,
+    data_path: Path,
     model_dir: Path,
     target_column: str,
     task_type: str,
-    prediction_sets: list[PredictionSet],
     global_cfg: BaseGlobalConfig,
     epochs: int,
     seed: int,
@@ -722,6 +513,7 @@ def _render_regression_script(
     regression_metrics: list[str],
     compound_min_screens: float | None,
     compound_screens_column: str,
+    split_column: str,
     renderers: Renderers,
 ) -> str:
     header = renderers.header(job_name, global_cfg)
@@ -740,18 +532,19 @@ def _render_regression_script(
         "",
         f'MODEL_DIR="{model_dir}"',
         'mkdir -p "${MODEL_DIR}"',
-        f'TRAINVAL_PATH="{trainval_path}"',
+        f'DATA_PATH="{data_path}"',
         f'TEMP_PARQUET="{temp_parquet}"',
+        f'SPLIT_COLUMN="{split_column}"',
         "",
     ]
 
     lines.append('echo "[INFO] [$START] [$(date)] [$$] Preparing regression dataset"')
     prep_lines = [
         '"${PYTHON_BIN}" -m model_jobs.cli prepare-regression \\',
-        '  --input "${TRAINVAL_PATH}" \\',
+        '  --input "${DATA_PATH}" \\',
         '  --output "${TEMP_PARQUET}" \\',
         '  --smiles-column "smiles" \\',
-        '  --split-column "split" \\',
+        '  --split-column "${SPLIT_COLUMN}" \\',
         f'  --target-column "{target_column}"',
     ]
     if extra_prep_lines:
@@ -772,7 +565,7 @@ def _render_regression_script(
             f"  --ensemble-size {ensemble_size} \\",
             '  --smiles-columns "smiles" \\',
             f'  --target-columns "{target_column}" \\',
-            '  --splits-column "split" \\',
+            '  --splits-column "${SPLIT_COLUMN}" \\',
             f'  --weight-column "{compound_screens_column}" \\',
             f"  --epochs {epochs} \\",
             "  --show-individual-scores \\",
@@ -798,16 +591,6 @@ def _render_regression_script(
         ]
     )
 
-    if prediction_sets:
-        lines.extend(
-            [
-                "",
-                'MODEL_PATH="${MODEL_DIR}"',
-                "",
-                _render_prediction_blocks(prediction_sets, global_cfg, job_slug),
-            ]
-        )
-
     return "\n".join(lines).strip() + "\n"
 
 
@@ -815,11 +598,10 @@ def _render_threshold_script(
     *,
     job_name: str,
     job_slug: str,
-    trainval_path: Path,
+    data_path: Path,
     model_dir: Path,
     metric_column: str,
     target_column: str,
-    prediction_sets: list[PredictionSet],
     global_cfg: BaseGlobalConfig,
     epochs: int,
     seed: int,
@@ -829,6 +611,7 @@ def _render_threshold_script(
     classification_metrics: list[str],
     compound_min_screens: float | None,
     compound_screens_column: str,
+    split_column: str,
     renderers: Renderers,
 ) -> str:
     header = renderers.header(job_name, global_cfg)
@@ -848,9 +631,10 @@ def _render_threshold_script(
         "",
         env_block,
         "",
+        f'SPLIT_COLUMN="{split_column}"',
         f'MODEL_DIR="{model_dir}"',
         'mkdir -p "${MODEL_DIR}"',
-        f'TRAINVAL_PATH="{trainval_path}"',
+        f'DATA_PATH="{data_path}"',
         f'TEMP_PARQUET="{temp_parquet}"',
         "",
         'echo "[INFO] [$START] [$(date)] [$$] Preparing threshold-classifier dataset"',
@@ -858,10 +642,10 @@ def _render_threshold_script(
 
     prep_lines = [
         '"${PYTHON_BIN}" -m model_jobs.cli prepare-threshold-classifier \\',
-        '  --input "${TRAINVAL_PATH}" \\',
+        '  --input "${DATA_PATH}" \\',
         '  --output "${TEMP_PARQUET}" \\',
         '  --smiles-column "smiles" \\',
-        '  --split-column "split" \\',
+        '  --split-column "${SPLIT_COLUMN}" \\',
         f'  --metric-column "{metric_column}" \\',
         f'  --target-column "{target_column}"',
     ]
@@ -883,7 +667,7 @@ def _render_threshold_script(
             f"  --ensemble-size {ensemble_size} \\",
             '  --smiles-columns "smiles" \\',
             f'  --target-columns "{target_column}" \\',
-            '  --splits-column "split" \\',
+            '  --splits-column "${SPLIT_COLUMN}" \\',
             f'  --weight-column "{compound_screens_column}" \\',
             f"  --epochs {epochs} \\",
             "  --show-individual-scores \\",
@@ -910,41 +694,6 @@ def _render_threshold_script(
         ]
     )
 
-    if prediction_sets:
-        lines.extend(
-            [
-                "",
-                'MODEL_PATH="${MODEL_DIR}"',
-                "",
-                _render_prediction_blocks(prediction_sets, global_cfg, job_slug),
-            ]
-        )
-
-    return "\n".join(lines).strip() + "\n"
-
-
-def _render_prediction_only_script(
-    *,
-    job_name: str,
-    job_slug: str,
-    model_path: Path,
-    prediction_sets: list[PredictionSet],
-    global_cfg: BaseGlobalConfig,
-    renderers: Renderers,
-) -> str:
-    if not prediction_sets:
-        raise ConfigError("Prediction-only job requires at least one prediction set.")
-    header = renderers.header(job_name, global_cfg)
-    env_block = renderers.common_env(global_cfg, job_name)
-    lines = [
-        header,
-        "",
-        env_block,
-        "",
-        f'MODEL_PATH="{model_path}"',
-        "",
-        _render_prediction_blocks(prediction_sets, global_cfg, job_slug),
-    ]
     return "\n".join(lines).strip() + "\n"
 
 
@@ -966,7 +715,6 @@ class GlobalConfig:
     metrics_classification: list[str]
     metrics_regression: list[str]
     chemprop_train_cmd: str
-    chemprop_predict_cmd: str
     submit: bool
     dataset_aliases: dict[str, Path] = field(default_factory=dict)
     base_path: Path = field(default_factory=Path)
@@ -996,7 +744,6 @@ def _parse_global_config(raw: dict, base_path: Path) -> GlobalConfig:
         ],
         metrics_regression=[str(m) for m in raw.get("regression_metrics", ["rmse", "mae", "r2"])],
         chemprop_train_cmd=str(raw.get("chemprop_train_cmd", "chemprop train")),
-        chemprop_predict_cmd=str(raw.get("chemprop_predict_cmd", "chemprop predict")),
         submit=bool(raw.get("submit", True)),
         dataset_aliases=dataset_aliases,
         base_path=base_path,
@@ -1044,7 +791,6 @@ def _append_conda_and_binaries(lines: list[str], global_cfg: BaseGlobalConfig) -
             "",
             f'PYTHON_BIN="{global_cfg.python_executable}"',
             f'CHEMPROP_TRAIN="{global_cfg.chemprop_train_cmd}"',
-            f'CHEMPROP_PREDICT="{global_cfg.chemprop_predict_cmd}"',
             "",
         ]
     )
