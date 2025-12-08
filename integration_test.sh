@@ -167,6 +167,7 @@ tasks:
     target_column: score
     compound_min_screens: 1
     compound_screens_column: screens
+    screens_weight_mode: linear
     predict_test: true
     epochs: 3
 
@@ -179,6 +180,7 @@ tasks:
     target_column: target
     compound_min_screens: 1
     compound_screens_column: screens
+    screens_weight_mode: linear
     predict_test: true
     thresholds:
       - suffix: p50_95

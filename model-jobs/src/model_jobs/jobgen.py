@@ -154,6 +154,14 @@ def _split_column_from_task(task: dict, *, default_seed: int) -> str:
     return f"split{seed_value}"
 
 
+def _screens_weight_mode_from_task(task: dict) -> str:
+    """Normalize the screens weight mode."""
+    mode = str(task.get("screens_weight_mode", "none")).strip().lower()
+    if mode not in {"none", "linear", "sqrt"}:
+        raise ConfigError("screens_weight_mode must be one of: none, linear, sqrt.")
+    return mode
+
+
 # ---------------------------------------------------------------------------
 # Job builders
 # ---------------------------------------------------------------------------
@@ -230,6 +238,7 @@ def _build_regression_jobs(task: dict, global_cfg: GC, renderers: Renderers) -> 
     if compound_screens_column is None:
         compound_screens_column = "screens"
     compound_screens_column = str(compound_screens_column)
+    screens_weight_mode = _screens_weight_mode_from_task(task)
 
     job_defs: list[JobDefinition] = []
     for target in targets_list:
@@ -262,6 +271,7 @@ def _build_regression_jobs(task: dict, global_cfg: GC, renderers: Renderers) -> 
             compound_screens_column=compound_screens_column,
             split_column=split_column,
             renderers=renderers,
+            screens_weight_mode=screens_weight_mode,
         )
         filename = f"{per_slug}.sh"
         job_defs.append(JobDefinition(per_job_name, filename, content, submit_flag))
@@ -287,6 +297,7 @@ def _build_threshold_jobs(task: dict, global_cfg: GC, renderers: Renderers) -> l
     if compound_screens_column is None:
         compound_screens_column = "screens"
     compound_screens_column = str(compound_screens_column)
+    screens_weight_mode = _screens_weight_mode_from_task(task)
 
     threshold_specs = task.get("thresholds")
     iterable = threshold_specs if threshold_specs else [task]
@@ -359,6 +370,7 @@ def _build_threshold_jobs(task: dict, global_cfg: GC, renderers: Renderers) -> l
             compound_screens_column=compound_screens_column,
             split_column=split_column,
             renderers=renderers,
+            screens_weight_mode=screens_weight_mode,
         )
         filename = f"{per_slug}.sh"
         jobs.append(JobDefinition(per_job_name, filename, content, submit_flag))
@@ -515,6 +527,7 @@ def _render_regression_script(
     compound_screens_column: str,
     split_column: str,
     renderers: Renderers,
+    screens_weight_mode: str,
 ) -> str:
     header = renderers.header(job_name, global_cfg)
     env_block = renderers.common_env(global_cfg, job_name)
@@ -523,7 +536,10 @@ def _render_regression_script(
     if compound_min_screens is not None:
         min_value = format(compound_min_screens, "g")
         extra_prep_lines.append(f"  --compound-min-screens {min_value}")
+    if compound_min_screens is not None or screens_weight_mode != "none":
         extra_prep_lines.append(f'  --compound-screens-column "{compound_screens_column}"')
+    if screens_weight_mode != "none":
+        extra_prep_lines.append(f'  --screens-weight-mode "{screens_weight_mode}"')
 
     lines = [
         header,
@@ -566,10 +582,15 @@ def _render_regression_script(
             '  --smiles-columns "smiles" \\',
             f'  --target-columns "{target_column}" \\',
             '  --splits-column "${SPLIT_COLUMN}" \\',
-            f'  --weight-column "{compound_screens_column}" \\',
-            f"  --epochs {epochs} \\",
-            "  --show-individual-scores \\",
         ]
+        if screens_weight_mode != "none":
+            train_cmd_lines.append(f'  --weight-column "{compound_screens_column}" \\')
+        train_cmd_lines.extend(
+            [
+                f"  --epochs {epochs} \\",
+                "  --show-individual-scores \\",
+            ]
+        )
         for metric in regression_metrics:
             train_cmd_lines.append(f'  --metrics "{metric}" \\')
         train_cmd_lines.append(f"  --pytorch-seed {seed} \\")
@@ -613,6 +634,7 @@ def _render_threshold_script(
     compound_screens_column: str,
     split_column: str,
     renderers: Renderers,
+    screens_weight_mode: str,
 ) -> str:
     header = renderers.header(job_name, global_cfg)
     env_block = renderers.common_env(global_cfg, job_name)
@@ -624,7 +646,10 @@ def _render_threshold_script(
     if compound_min_screens is not None:
         min_value = format(compound_min_screens, "g")
         extra_prep_lines.append(f"  --compound-min-screens {min_value}")
+    if compound_min_screens is not None or screens_weight_mode != "none":
         extra_prep_lines.append(f'  --compound-screens-column "{compound_screens_column}"')
+    if screens_weight_mode != "none":
+        extra_prep_lines.append(f'  --screens-weight-mode "{screens_weight_mode}"')
 
     lines = [
         header,
@@ -668,10 +693,15 @@ def _render_threshold_script(
             '  --smiles-columns "smiles" \\',
             f'  --target-columns "{target_column}" \\',
             '  --splits-column "${SPLIT_COLUMN}" \\',
-            f'  --weight-column "{compound_screens_column}" \\',
-            f"  --epochs {epochs} \\",
-            "  --show-individual-scores \\",
         ]
+        if screens_weight_mode != "none":
+            train_cmd_lines.append(f'  --weight-column "{compound_screens_column}" \\')
+        train_cmd_lines.extend(
+            [
+                f"  --epochs {epochs} \\",
+                "  --show-individual-scores \\",
+            ]
+        )
         for metric in classification_metrics:
             train_cmd_lines.append(f'  --metrics "{metric}" \\')
         train_cmd_lines.append('  --auto-class-weights "balanced" \\')

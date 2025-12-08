@@ -61,6 +61,7 @@ tasks:
     target_column: score_seed${SEED}
     compound_min_screens: 50
     compound_screens_column: screens
+    screens_weight_mode: linear
     predict_test: true
     epochs: 3
     ensemble_size: 1
@@ -71,6 +72,7 @@ tasks:
     split_seed: ${SEED}
     metric_column: score_seed${SEED}
     thresholds_json: thresholds
+    screens_weight_mode: linear
     predict_test: true
     epochs: 3
     ensemble_size: 1

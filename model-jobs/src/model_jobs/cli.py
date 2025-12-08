@@ -4,6 +4,7 @@ import logging
 import os
 import subprocess
 from pathlib import Path
+from enum import Enum
 from typing import Callable, Sequence
 
 import typer
@@ -16,6 +17,13 @@ app = typer.Typer(
     no_args_is_help=True,
     help="Utilities for preparing Chemprop training and prediction inputs.",
 )
+
+
+class ScreensWeightMode(str, Enum):
+    none = "none"
+    linear = "linear"
+    sqrt = "sqrt"
+
 
 def _setup_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.INFO
@@ -84,6 +92,14 @@ def prepare_regression(
         "--compound-screens-column",
         help="Column holding the per-compound screen count.",
     ),
+    screens_weight_mode: ScreensWeightMode = typer.Option(
+        ScreensWeightMode.none,
+        "--screens-weight-mode",
+        help="Sample weight strategy: none, linear, or sqrt of the screens column.",
+        case_sensitive=False,
+        show_choices=True,
+        metavar="none|linear|sqrt",
+    ),
 ) -> None:
     """Build a regression-ready Parquet file with SMILES, split, and target columns."""
     path = write_regression_dataset(
@@ -94,6 +110,7 @@ def prepare_regression(
         target_column=target_column,
         compound_min_screens=compound_min_screens,
         compound_screens_column=compound_screens_column,
+        screens_weight_mode=screens_weight_mode.value,
     )
     LOGGER.info("Wrote %s", path)
     typer.echo(path)
@@ -146,6 +163,14 @@ def prepare_threshold_classifier(
         "--compound-screens-column",
         help="Column holding the per-compound screen count.",
     ),
+    screens_weight_mode: ScreensWeightMode = typer.Option(
+        ScreensWeightMode.none,
+        "--screens-weight-mode",
+        help="Sample weight strategy: none, linear, or sqrt of the screens column.",
+        case_sensitive=False,
+        show_choices=True,
+        metavar="none|linear|sqrt",
+    ),
 ) -> None:
     """Filter a dataset to binary labels and emit a classification Parquet file."""
 
@@ -182,6 +207,7 @@ def prepare_threshold_classifier(
         upper_threshold=hi,
         compound_min_screens=compound_min_screens,
         compound_screens_column=compound_screens_column,
+        screens_weight_mode=screens_weight_mode.value,
     )
     LOGGER.info("Wrote %s", path)
     typer.echo(path)

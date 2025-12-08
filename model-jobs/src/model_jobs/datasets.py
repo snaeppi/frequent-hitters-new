@@ -10,6 +10,9 @@ import polars as pl
 logger = logging.getLogger(__name__)
 
 
+_SCREENS_WEIGHT_MODES = {"none", "linear", "sqrt"}
+
+
 def _ensure_parent_dir(path: Path) -> None:
     if parent := path.parent:
         parent.mkdir(parents=True, exist_ok=True)
@@ -50,6 +53,29 @@ def _apply_compound_min_screens(
     return lf.filter(pl.col(screens_column) >= float(min_screens))
 
 
+def _normalize_screens_weight_mode(value: str | None) -> str:
+    """Normalize and validate the screens weight mode."""
+    if value is None:
+        return "none"
+    mode = str(value).strip().lower()
+    if mode not in _SCREENS_WEIGHT_MODES:
+        allowed = ", ".join(sorted(_SCREENS_WEIGHT_MODES))
+        raise ValueError(f"Invalid screens_weight_mode '{value}'. Allowed: {allowed}.")
+    return mode
+
+
+def _screens_weight_expr(column: str, mode: str) -> pl.Expr | None:
+    """Return an expression to transform the screens column for weighting."""
+    if mode == "none":
+        return None
+    if mode == "linear":
+        return pl.col(column).cast(pl.Float64).alias(column)
+    if mode == "sqrt":
+        return pl.col(column).cast(pl.Float64).sqrt().alias(column)
+    # Fallback to safe error; normalization should prevent reaching here.
+    raise ValueError(f"Unhandled screens_weight_mode '{mode}'.")
+
+
 def write_regression_dataset(
     input_path: str | Path,
     output_path: str | Path,
@@ -60,13 +86,19 @@ def write_regression_dataset(
     target_column: str = "score",
     compound_min_screens: float | None = None,
     compound_screens_column: str = "screens",
+    screens_weight_mode: str = "none",
 ) -> Path:
     """Prepare the regression dataset expected by Chemprop."""
     input_path = Path(input_path)
     output_path = Path(output_path)
 
+    weight_mode = _normalize_screens_weight_mode(screens_weight_mode)
+    needs_screens_column = compound_min_screens is not None or weight_mode != "none"
+
     targets = list(dict.fromkeys(target_columns or [target_column]))
-    required = {smiles_column, split_column, compound_screens_column, *targets}
+    required = {smiles_column, split_column, *targets}
+    if needs_screens_column:
+        required.add(compound_screens_column)
     _assert_columns(input_path, required)
 
     logger.info("Creating regression dataset from %s -> %s", input_path, output_path)
@@ -76,7 +108,12 @@ def write_regression_dataset(
         min_screens=compound_min_screens,
         screens_column=compound_screens_column,
     )
-    columns = [smiles_column, split_column, compound_screens_column, *targets]
+    if expr := _screens_weight_expr(compound_screens_column, weight_mode):
+        lf = lf.with_columns(expr)
+    columns = [smiles_column, split_column]
+    if needs_screens_column:
+        columns.append(compound_screens_column)
+    columns.extend(targets)
     _sink_parquet(lf, output_path, columns)
     return output_path
 
@@ -156,6 +193,7 @@ def write_threshold_classifier_dataset(
     upper_threshold: float,
     compound_min_screens: float | None = None,
     compound_screens_column: str = "screens",
+    screens_weight_mode: str = "none",
 ) -> Path:
     """Prepare a binary classification dataset by thresholding a continuous metric."""
     input_path = Path(input_path)
@@ -164,7 +202,12 @@ def write_threshold_classifier_dataset(
     if lower_threshold > upper_threshold:
         raise ValueError("lower_threshold must be less than or equal to upper_threshold")
 
-    required = {smiles_column, split_column, metric_column, compound_screens_column}
+    weight_mode = _normalize_screens_weight_mode(screens_weight_mode)
+    needs_screens_column = compound_min_screens is not None or weight_mode != "none"
+
+    required = {smiles_column, split_column, metric_column}
+    if needs_screens_column:
+        required.add(compound_screens_column)
     _assert_columns(input_path, required)
 
     logger.info(
@@ -192,24 +235,25 @@ def write_threshold_classifier_dataset(
         min_screens=compound_min_screens,
         screens_column=compound_screens_column,
     )
+    weight_expr = _screens_weight_expr(compound_screens_column, weight_mode)
+    base_select = [
+        pl.col(smiles_column),
+        pl.col(split_column),
+        metric,
+    ]
+    if needs_screens_column:
+        base_select.append(pl.col(compound_screens_column))
     lf = (
-        lf.select(
-            [
-                pl.col(smiles_column),
-                pl.col(split_column),
-                metric,
-                pl.col(compound_screens_column),
-            ]
-        )
+        lf.select(base_select)
         .filter(metric.is_not_null())
-        .with_columns(target_expr)
+        .with_columns([expr for expr in [target_expr, weight_expr] if expr is not None])
         .filter(pl.col(target_column).is_not_null())
         .select(
             [
                 pl.col(smiles_column),
                 pl.col(split_column),
                 pl.col(target_column).cast(pl.Int8),
-                pl.col(compound_screens_column),
+                *([pl.col(compound_screens_column)] if needs_screens_column else []),
             ]
         )
     )

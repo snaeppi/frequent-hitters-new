@@ -33,6 +33,7 @@ tasks:
     target_column: target
     compound_min_screens: 100
     compound_screens_column: screens
+    screens_weight_mode: linear
     predict_test: true
     split_seed: 1337
 
@@ -42,5 +43,6 @@ tasks:
     target_column: target
     compound_min_screens: 100
     compound_screens_column: screens
+    screens_weight_mode: linear
     predict_test: true
     split_seed: 1337
