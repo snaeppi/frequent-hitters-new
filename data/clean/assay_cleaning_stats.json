@@ -1,0 +1,38 @@
+{
+  "input": {
+    "rows": 229726022,
+    "unique_compounds": 2588417,
+    "unique_assays": 1105
+  },
+  "structure_cleaning": {
+    "unique_smiles": 2588570,
+    "valid_canonical_smiles": 2549457,
+    "dropped": 39113,
+    "drop_reasons": {
+      "retained": 2549457,
+      "molecular_weight_filter": 36915,
+      "forbidden_atom": 2156,
+      "canonical_validation_failed": 34,
+      "invalid_smiles": 7,
+      "uncharger_error": 1
+    },
+    "skip_tautomers": false
+  },
+  "output": {
+    "combined_clean": {
+      "rows": 227549719,
+      "unique_compounds": 2549306,
+      "unique_assays": 1105
+    },
+    "biochemical": {
+      "rows": 102161398,
+      "unique_compounds": 2121926,
+      "unique_assays": 455
+    },
+    "cellular": {
+      "rows": 86811910,
+      "unique_compounds": 1464668,
+      "unique_assays": 361
+    }
+  }
+}
