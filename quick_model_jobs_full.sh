@@ -44,55 +44,59 @@ cat > "${JOBS_CONFIG}" <<EOF
 global:
   models_dir: ${JOBS_DIR}/models
   temp_dir: ${JOBS_DIR}/temp
-  conda_commands: []
   conda_activate: ""
   cpus: 2
-  seed: ${SEED}
-  submit: false
   datasets:
     reg: ${REG_PATH}
     thresholds: ${THRESH_PATH}
 
-tasks:
-  - type: regression
-    job_name: quick_reg_${ASSAY_FORMAT}
-    trainval_path: reg
-    split_seed: ${SEED}
-    target_column: score_seed${SEED}
+defaults:
+  all:
+    epochs: 3
+    ensemble_size: 1
+    split_seed: "{seed}"
+    chemprop_seed: "{seed}"
+  hit_rate:
     compound_min_screens: 50
     compound_screens_column: screens
     screens_weight_mode: linear
-    predict_test: true
-    epochs: 3
-    ensemble_size: 1
+  threshold:
+    thresholds:
+      expand:
+        upper: [95]
+      template:
+        suffix: "p50_{upper}"
+        lower_percentile: 50
+        upper_percentile: "{upper}"
+
+sweeps:
+  seed: [${SEED}]
+
+tasks:
+  - type: regression
+    job_name: quick_reg_${ASSAY_FORMAT}_seed{seed}
+    data_path: reg
+    expand:
+      seed: "@seed"
 
   - type: threshold
-    job_name: quick_thr_${ASSAY_FORMAT}
-    trainval_path: reg
-    split_seed: ${SEED}
-    metric_column: score_seed${SEED}
+    job_name: quick_thr_${ASSAY_FORMAT}_seed{seed}
+    data_path: reg
     thresholds_json: thresholds
-    screens_weight_mode: linear
-    predict_test: true
-    epochs: 3
-    ensemble_size: 1
-    thresholds:
-      - suffix: p50_95
-        lower_percentile: 50
-        upper_percentile: 95
+    expand:
+      seed: "@seed"
 EOF
 
 echo "[INFO] Generating job scripts with model-jobs (assay_format=${ASSAY_FORMAT}, seed=${SEED})"
 
 pushd "${ROOT_DIR}/model-jobs" >/dev/null
-PYTHONPATH=src python -m model_jobs.cli submit-jobs \
+PYTHONPATH=src python -m model_jobs.cli write-scripts \
   --config "${JOBS_CONFIG}" \
-  --output-dir "${JOBS_DIR}/scripts" \
-  --dry-run
+  --output-dir "${JOBS_DIR}/scripts"
 popd >/dev/null
 
 echo "[INFO] Running training scripts"
-for job in quick_reg_${ASSAY_FORMAT} quick_thr_${ASSAY_FORMAT}_p50_95; do
+for job in quick_reg_${ASSAY_FORMAT}_seed${SEED} quick_thr_${ASSAY_FORMAT}_seed${SEED}_p50_95; do
   script="${JOBS_DIR}/scripts/${job}.sh"
   if [[ -f "${script}" ]]; then
     echo "[INFO] Executing ${script}"

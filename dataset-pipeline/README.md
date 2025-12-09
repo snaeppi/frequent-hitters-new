@@ -20,4 +20,4 @@ Outputs per assay format:
 - Unified regression dataset: `<format>_regression.parquet`
 - Unified multi-task dataset: `<format>_multilabel.parquet`
 - Threshold metadata: `<format>_thresholds.json`
-- Split columns per seed: `split<seed>` in each dataset (train/val/test). The regression and multi-task files share the same test compounds per seed; the regression file contains only regression-eligible rows.
+- Split columns per seed: `split_seed<seed>` in each dataset (train/val/test). The regression and multi-task files share the same test compounds per seed; the regression file contains only regression-eligible rows.

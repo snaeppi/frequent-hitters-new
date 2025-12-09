@@ -1,0 +1,47 @@
+global:
+  models_dir: /abs/path/to/output/models
+  temp_dir: /abs/path/to/output/temp
+  conda_activate: ""
+  cpus: 2
+  datasets:
+    bio_reg: /abs/path/to/processed/biochemical_regression.parquet
+    bio_thresholds: /abs/path/to/processed/biochemical_thresholds.json
+
+# Defaults apply to every task unless overridden.
+defaults:
+  all:
+    epochs: 3
+    ensemble_size: 1
+    split_seed: "{seed}"
+    chemprop_seed: "{seed}"
+  hit_rate:
+    compound_min_screens: 20
+    compound_screens_column: screens
+    screens_weight_mode: linear
+  threshold:
+    thresholds:
+      expand:
+        upper: [95, 90]
+      template:
+        suffix: "p50_{upper}"
+        lower_percentile: 50
+        upper_percentile: "{upper}"
+
+# Re-usable lists for task expansion.
+sweeps:
+  seed: [1, 2]
+
+tasks:
+  - type: regression
+    job_name: "demo_reg"
+    data_path: bio_reg
+    expand:
+      seed: "@seed"
+
+  - type: threshold
+    job_name: "demo_thr"
+    data_path: bio_reg
+    thresholds_json: bio_thresholds
+    chemprop_seed: 42
+    expand:
+      seed: "@seed"

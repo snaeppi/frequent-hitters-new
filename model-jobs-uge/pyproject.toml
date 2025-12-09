@@ -3,9 +3,9 @@ requires = ["uv_build>=0.9.5,<0.10.0"]
 build-backend = "uv_build"
 
 [project]
-name = "model-jobs"
+name = "model-jobs-uge"
 version = "0.1.0"
-description = "Job generator for Chemprop training and prediction workflows."
+description = "UGE-aware Chemprop job generator with optional qsub submission."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-model-jobs = "model_jobs.cli:main"
+model-jobs-uge = "model_jobs_uge.cli:main"
 
 [project.optional-dependencies]
 dev = [
@@ -39,7 +39,3 @@ ignore = ["E203", "E501", "B008", "B009", "B905", "S103", "S110", "S320", "S603"
 python_version = "3.11"
 warn_unused_configs = true
 ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = ["model_jobs.jobgen"]
-ignore_errors = true

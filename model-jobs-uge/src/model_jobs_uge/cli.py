@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 from enum import Enum
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
 import typer
 
@@ -14,12 +15,12 @@ from .datasets import (
     write_threshold_classifier_dataset,
     write_trimmed_dataset,
 )
-from .jobgen import ConfigError, JobDefinition, load_job_plan
+from .jobgen import ConfigError, JobDefinition, load_submission_plan
 
-LOGGER = logging.getLogger("model_jobs.cli")
+LOGGER = logging.getLogger("model_jobs_uge.cli")
 app = typer.Typer(
     no_args_is_help=True,
-    help="Utilities for preparing Chemprop training and prediction inputs.",
+    help="Generate UGE-ready Chemprop scripts and optionally submit them with qsub.",
 )
 
 
@@ -37,10 +38,14 @@ def _setup_logging(verbose: bool) -> None:
     )
 
 
-def _write_scripts(
+def _write_scripts_and_maybe_submit(
     *,
     jobs: Sequence[JobDefinition],
     output_dir: Path,
+    submit_override: bool | None,
+    dry_run: bool,
+    submitter: Callable[[Path], None],
+    submit_label: str,
     logger: logging.Logger = LOGGER,
 ) -> None:
     for job in jobs:
@@ -48,7 +53,15 @@ def _write_scripts(
         content = job.content if job.content.endswith("\n") else f"{job.content}\n"
         script_path.write_text(content)
         os.chmod(script_path, 0o750)
-        logger.info("Generated %s", script_path)
+
+        should_submit = job.submit if submit_override is None else submit_override
+
+        if dry_run:
+            logger.info("[DRY-RUN] Generated %s (%s skipped)", script_path, submit_label)
+        elif should_submit:
+            submitter(script_path)
+        else:
+            logger.info("Generated %s (%s skipped by config)", script_path, submit_label)
 
 
 @app.callback()
@@ -222,28 +235,51 @@ def trim_columns(
     typer.echo(path)
 
 
-@app.command("write-scripts")
-def write_scripts(
-    config_path: Path = typer.Option(..., "--config", help="Path to the job plan YAML file."),
+@app.command("submit-jobs")
+def submit_jobs(
+    config_path: Path = typer.Option(..., "--config", help="Path to the submission YAML file."),
     output_dir: Path = typer.Option(
         ..., "--output-dir", help="Directory for generated shell scripts."
     ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Generate scripts without invoking qsub."
+    ),
+    submit_override: bool | None = typer.Option(
+        None,
+        "--submit/--no-submit",
+        help="Force submit or skip execution regardless of config.",
+    ),
 ) -> None:
-    """Generate Chemprop training/prediction scripts from YAML."""
+    """Generate UGE-ready Chemprop scripts and optionally submit them via qsub."""
     try:
-        global_cfg, jobs = load_job_plan(config_path)
+        global_cfg, jobs = load_submission_plan(config_path)
     except ConfigError as exc:
         raise typer.BadParameter(str(exc))
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    global_cfg.logs_dir.mkdir(parents=True, exist_ok=True)
     global_cfg.models_dir.mkdir(parents=True, exist_ok=True)
     global_cfg.temp_dir.mkdir(parents=True, exist_ok=True)
 
     LOGGER.info("Loaded %d job(s) from %s", len(jobs), config_path)
 
-    _write_scripts(
+    def _submit_with_qsub(script_path: Path) -> None:
+        cmd = ["qsub", str(script_path)]
+        LOGGER.info("Submitting %s via %s", script_path, " ".join(cmd))
+        try:
+            subprocess.run(cmd, check=True)
+        except FileNotFoundError as exc:
+            raise typer.Exit(1) from exc
+        except subprocess.CalledProcessError as exc:
+            raise typer.Exit(exc.returncode) from exc
+
+    _write_scripts_and_maybe_submit(
         jobs=jobs,
         output_dir=output_dir,
+        submit_override=submit_override,
+        dry_run=dry_run,
+        submitter=_submit_with_qsub,
+        submit_label="qsub submission",
     )
 
 

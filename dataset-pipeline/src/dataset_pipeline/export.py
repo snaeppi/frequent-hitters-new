@@ -74,8 +74,8 @@ def write_model_datasets(
     if not seeds:
         raise ValueError("At least one seed is required to write datasets.")
 
-    reg_split_columns = [f"split{seed}" for seed in seeds]
-    mt_split_columns = [f"split{seed}" for seed in seeds]
+    reg_split_columns = [f"split_seed{seed}" for seed in seeds]
+    mt_split_columns = [f"split_seed{seed}" for seed in seeds]
     missing_reg = [col for col in reg_split_columns if col not in reg_split_df.columns]
     missing_mt = [col for col in mt_split_columns if col not in mt_split_df.columns]
     if missing_reg or missing_mt:
@@ -153,7 +153,7 @@ def write_model_datasets(
     compound_counts_by_seed: dict[str, int] = {}
 
     for seed in seeds:
-        split_col = f"split{seed}"
+        split_col = f"split_seed{seed}"
         if split_col not in regression_df.columns:
             raise KeyError(f"Missing split column '{split_col}' in regression dataset.")
 

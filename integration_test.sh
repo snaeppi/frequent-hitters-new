@@ -141,67 +141,69 @@ cat > "${JOBS_CONFIG}" <<EOF
 global:
   models_dir: ${ARTIFACTS_DIR}/models
   temp_dir: ${ARTIFACTS_DIR}/temp
-  conda_commands: []
   conda_activate: ""
   cpus: 2
-  seed: 1337
-  submit: false
   datasets:
     bio_reg: ${PIPELINE_OUT}/${ASSAY_FORMAT}/${ASSAY_FORMAT}_regression.parquet
     bio_mt: ${PIPELINE_OUT}/${ASSAY_FORMAT}/${ASSAY_FORMAT}_multilabel.parquet
     bio_thresholds: ${PIPELINE_OUT}/${ASSAY_FORMAT}/${ASSAY_FORMAT}_thresholds.json
 
-tasks:
-  - type: multilabel
-    job_name: it_mt_bio
-    trainval_path: bio_mt
-    predict_test: true
-    split_seed: 1337
+defaults:
+  all:
     epochs: 3
     ensemble_size: 1
+    split_seed: "{seed}"
+    chemprop_seed: "{seed}"
+  hit_rate:
+    compound_min_screens: 1
+    compound_screens_column: screens
+    screens_weight_mode: linear
+  threshold:
+    thresholds:
+      expand:
+        upper: [95]
+      template:
+        suffix: "p50_{upper}"
+        lower_percentile: 50
+        upper_percentile: "{upper}"
+
+sweeps:
+  seed: [1337]
+
+tasks:
+  - type: multilabel
+    job_name: it_mt_bio_seed{seed}
+    data_path: bio_mt
+    expand:
+      seed: "@seed"
 
   - type: regression
-    job_name: it_reg_bio
-    trainval_path: bio_reg
-    split_seed: 1337
-    target_column: score
-    compound_min_screens: 1
-    compound_screens_column: screens
-    screens_weight_mode: linear
-    predict_test: true
-    epochs: 3
+    job_name: it_reg_bio_seed{seed}
+    data_path: bio_reg
+    expand:
+      seed: "@seed"
 
   - type: threshold
-    job_name: it_thr_bio
-    trainval_path: bio_reg
-    split_seed: 1337
+    job_name: it_thr_bio_seed{seed}
+    data_path: bio_reg
     thresholds_json: bio_thresholds
-    metric_column: score
     target_column: target
-    compound_min_screens: 1
-    compound_screens_column: screens
-    screens_weight_mode: linear
-    predict_test: true
-    thresholds:
-      - suffix: p50_95
-        lower_percentile: 50
-        upper_percentile: 95
-    epochs: 3
+    expand:
+      seed: "@seed"
 EOF
 
 echo "[INFO] Generating job scripts with model-jobs"
 
 pushd "${ROOT_DIR}/model-jobs" >/dev/null
-PYTHONPATH=src python -m model_jobs.cli submit-jobs \
+PYTHONPATH=src python -m model_jobs.cli write-scripts \
   --config "${JOBS_CONFIG}" \
-  --output-dir "${JOBS_DIR}/scripts" \
-  --dry-run
+  --output-dir "${JOBS_DIR}/scripts"
 popd >/dev/null
 
 echo "[INFO] Running selected training + prediction scripts"
 
 # Execute a representative regression job to keep runtime minimal.
-for job in it_mt_bio it_reg_bio it_thr_bio_p50_95; do
+for job in it_mt_bio_seed1337 it_reg_bio_seed1337 it_thr_bio_seed1337_p50_95; do
   script="${JOBS_DIR}/scripts/${job}.sh"
   if [[ -f "${script}" ]]; then
     echo "[INFO] Executing ${script}"
@@ -213,8 +215,8 @@ done
 
 echo "[INFO] Checking for expected outputs"
 
-test -f "${ARTIFACTS_DIR}/models/it_reg_bio/predictions/test_preds.csv" || {
-  echo "[ERROR] Missing test predictions for it_reg_bio" >&2
+test -f "${ARTIFACTS_DIR}/models/it_reg_bio_seed1337/predictions/test_preds.csv" || {
+  echo "[ERROR] Missing test predictions for it_reg_bio_seed1337" >&2
   exit 1
 }
 

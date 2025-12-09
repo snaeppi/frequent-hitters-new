@@ -268,8 +268,9 @@ def assign_multiseed_splits(
     """
     Assign scaffold-aware splits for regression and multi-task models across multiple seeds.
 
-    Returns two DataFrames (regression-only and multi-task) that both contain per-seed `split<seed>`
-    columns (train/val/test). Test membership is identical per seed across the two frames.
+    Returns two DataFrames (regression-only and multi-task) that both contain per-seed
+    `split_seed<seed>` columns (train/val/test). Test membership is identical per seed across the two
+    frames.
     """
     if not seeds:
         raise ValueError("At least one seed must be provided for splitting.")
@@ -313,8 +314,8 @@ def assign_multiseed_splits(
     shared_tests: dict[int, set[str]] = {}
 
     for seed in seeds:
-        reg_col = f"split{seed}_reg"
-        mt_col = f"split{seed}_mt"
+        reg_col = f"split_seed{seed}_reg"
+        mt_col = f"split_seed{seed}_mt"
 
         regression_pool = base_df.filter(pl.col("regression_eligible"))
         regression_split_df, _reg_stats = _assign_scaffold_split_column(
@@ -367,12 +368,12 @@ def assign_multiseed_splits(
         seed_summary = {
             "seed": seed,
             "regression_split_counts": _summarize_split_counts(
-                regression_split_df.rename({reg_col: f"split{seed}"}),
-                split_column=f"split{seed}",
+                regression_split_df.rename({reg_col: f"split_seed{seed}"}),
+                split_column=f"split_seed{seed}",
             ),
             "multitask_split_counts": _summarize_split_counts(
-                multitask_split_df.rename({mt_col: f"split{seed}"}),
-                split_column=f"split{seed}",
+                multitask_split_df.rename({mt_col: f"split_seed{seed}"}),
+                split_column=f"split_seed{seed}",
             ),
             "shared_test_compounds": len(test_smiles),
         }
@@ -380,7 +381,9 @@ def assign_multiseed_splits(
 
     reg_split_df = base_df.filter(pl.col("regression_eligible")).with_columns(
         [
-            pl.col("smiles").replace(reg_mappings[seed], default=None).alias(f"split{seed}")
+            pl.col("smiles")
+            .replace(reg_mappings[seed], default=None)
+            .alias(f"split_seed{seed}")
             for seed in seeds
         ]
     )
@@ -390,7 +393,7 @@ def assign_multiseed_splits(
             pl.when(pl.col("smiles").is_in(shared_tests[seed]))
             .then(pl.lit("test"))
             .otherwise(pl.col("smiles").replace(mt_mappings[seed], default=None))
-            .alias(f"split{seed}")
+            .alias(f"split_seed{seed}")
             for seed in seeds
         ]
     )
@@ -406,7 +409,7 @@ def assign_multiseed_splits(
                 reg_split_df.select(
                     [
                         pl.lit(str(seed)).alias("seed"),
-                        pl.col(f"split{seed}").alias("split"),
+                        pl.col(f"split_seed{seed}").alias("split"),
                         pl.col("screens"),
                     ]
                 )

@@ -10,24 +10,36 @@ from typing import Callable, Mapping, Protocol, Sequence, TypeVar
 
 import yaml
 
-__all__ = ["ConfigError", "GlobalConfig", "JobDefinition", "load_job_plan"]
+__all__ = ["ConfigError", "GlobalConfig", "JobDefinition", "load_submission_plan"]
 
 
 class ConfigError(Exception):
-    """Raised when the job plan configuration file is invalid."""
+    """Raised when the submission configuration file is invalid."""
 
 
 class BaseGlobalConfig(Protocol):
+    email: str
+    logs_dir: Path
     models_dir: Path
     temp_dir: Path
     cpus: int
+    memory: str
+    runtime: str
+    gpu_cards: int
+    queue_directives: list[str]
+    conda_commands: list[str]
     conda_activate: str
     python_executable: str
     epochs: int
+    notify_events: str
+    email_notifications: bool
+    gpu_map_script: str | None
     metrics_classification: list[str]
     metrics_regression: list[str]
     chemprop_train_cmd: str
+    submit: bool
     dataset_aliases: dict[str, Path]
+    extra_header_directives: list[str]
     base_path: Path
 
 
@@ -45,24 +57,37 @@ class JobDefinition:
     job_name: str
     filename: str
     content: str
+    submit: bool
 
 
 @dataclass
 class GlobalConfig:
+    email: str
+    logs_dir: Path
     models_dir: Path
     temp_dir: Path
     cpus: int
+    memory: str
+    runtime: str
+    gpu_cards: int
+    queue_directives: list[str]
+    conda_commands: list[str]
     conda_activate: str
     python_executable: str
     epochs: int
+    notify_events: str
+    email_notifications: bool
+    gpu_map_script: str | None
     metrics_classification: list[str]
     metrics_regression: list[str]
     chemprop_train_cmd: str
+    submit: bool
     dataset_aliases: dict[str, Path] = field(default_factory=dict)
+    extra_header_directives: list[str] = field(default_factory=list)
     base_path: Path = field(default_factory=Path)
 
 
-def load_job_plan(config_path: Path) -> tuple[GlobalConfig, list[JobDefinition]]:
+def load_submission_plan(config_path: Path) -> tuple[GlobalConfig, list[JobDefinition]]:
     raw = _load_yaml(config_path)
     base_path = config_path.resolve().parent
     sweeps = _parse_sweeps(raw.get("sweeps") or {})
@@ -78,11 +103,11 @@ def load_job_plan(config_path: Path) -> tuple[GlobalConfig, list[JobDefinition]]
         for task in _expand_task_entry(entry, sweeps, defaults, global_cfg):
             task_type = _normalize_task_type(task.get("type"))
             if task_type == "multilabel":
-                jobs.extend(_build_multilabel_jobs(task, global_cfg, _RENDERERS))
+                jobs.extend(_build_multilabel_jobs(task, global_cfg, _UGE_RENDERERS))
             elif task_type == "regression":
-                jobs.extend(_build_regression_jobs(task, global_cfg, _RENDERERS))
+                jobs.extend(_build_regression_jobs(task, global_cfg, _UGE_RENDERERS))
             elif task_type == "threshold":
-                jobs.extend(_build_threshold_jobs(task, global_cfg, _RENDERERS))
+                jobs.extend(_build_threshold_jobs(task, global_cfg, _UGE_RENDERERS))
             else:
                 raise ConfigError(f"Unknown task type '{task.get('type')}'.")
 
@@ -212,7 +237,6 @@ def _expand_thresholds(
     if raw_thresholds is None:
         raise ConfigError("Threshold tasks require a 'thresholds' block.")
 
-    # Case 1: {"expand": {...}, "template": {...}}
     if isinstance(raw_thresholds, Mapping) and "template" in raw_thresholds:
         expand_spec = raw_thresholds.get("expand", {})
         template = raw_thresholds.get("template", {})
@@ -284,28 +308,49 @@ def _expand_task_entry(
 
 
 def _parse_global_config(raw: Mapping[str, object], base_path: Path) -> GlobalConfig:
-    if "models_dir" not in raw:
-        raise ConfigError("global.models_dir is required.")
-    if "temp_dir" not in raw:
-        raise ConfigError("global.temp_dir is required.")
+    required = ["email", "logs_dir", "models_dir", "temp_dir", "memory", "runtime"]
+    missing = [k for k in required if k not in raw]
+    if missing:
+        raise ConfigError(f"Missing required global fields: {', '.join(missing)}.")
+
+    cpus_raw = raw.get("cpus", raw.get("cores"))
+    if cpus_raw is None:
+        raise ConfigError("global.cpus is required for UGE submissions.")
+    gpu_raw = raw.get("gpu_cards", raw.get("gpu"))
+    if gpu_raw is None:
+        raise ConfigError("global.gpu_cards (or gpu) is required for UGE submissions.")
 
     dataset_aliases: dict[str, Path] = {}
     for key, value in (raw.get("datasets") or {}).items():
         dataset_aliases[str(key)] = _resolve_path(value, base_path)
 
+    queue_directives = raw.get("queue_directives") or ["-j y", "-R y", "-notify"]
+
     return GlobalConfig(
+        email=str(raw["email"]),
+        logs_dir=_resolve_path(raw["logs_dir"], base_path),
         models_dir=_resolve_path(raw["models_dir"], base_path),
         temp_dir=_resolve_path(raw["temp_dir"], base_path),
-        cpus=int(raw.get("cpus", raw.get("cores", 1))),
+        cpus=int(cpus_raw),
+        memory=str(raw["memory"]),
+        runtime=str(raw["runtime"]),
+        gpu_cards=int(gpu_raw),
+        queue_directives=[str(d) for d in queue_directives],
+        conda_commands=[str(cmd) for cmd in raw.get("conda_commands", [])],
         conda_activate=str(raw.get("conda_activate", "")),
         python_executable=str(raw.get("python", "python")),
         epochs=int(raw.get("epochs", 50)),
+        notify_events=str(raw.get("notify_events", "bea")),
+        email_notifications=bool(raw.get("email_notifications", True)),
+        gpu_map_script=str(raw.get("gpu_map_script")) if raw.get("gpu_map_script") else None,
         metrics_classification=[
             str(m) for m in raw.get("classification_metrics", ["prc", "roc", "accuracy", "f1"])
         ],
         metrics_regression=[str(m) for m in raw.get("regression_metrics", ["rmse", "mae", "r2"])],
         chemprop_train_cmd=str(raw.get("chemprop_train_cmd", "chemprop train")),
+        submit=bool(raw.get("submit", True)),
         dataset_aliases=dataset_aliases,
+        extra_header_directives=[str(d) for d in raw.get("extra_directives", [])],
         base_path=base_path,
     )
 
@@ -362,8 +407,8 @@ def _format_model_dir(
     return _resolve_path(formatted, global_cfg.base_path)
 
 
-def _split_column(default_seed: int) -> str:
-    return f"split_seed{default_seed}"
+def _split_column(split_seed: int) -> str:
+    return f"split_seed{split_seed}"
 
 
 def _ensure_seed_suffix(value: str, split_seed: int, *, delimiter: str = "_seed") -> str:
@@ -380,6 +425,13 @@ def _screens_weight_mode_from_task(task: Mapping[str, object]) -> str:
     return mode
 
 
+def _should_submit(task: Mapping[str, object], global_cfg: BaseGlobalConfig) -> bool:
+    submit_override = task.get("submit")
+    if submit_override is None:
+        return global_cfg.submit
+    return bool(submit_override)
+
+
 # ---------------------------------------------------------------------------
 # Job builders
 # ---------------------------------------------------------------------------
@@ -387,12 +439,12 @@ def _screens_weight_mode_from_task(task: Mapping[str, object]) -> str:
 
 def _build_multilabel_jobs(task: Mapping[str, object], global_cfg: GC, renderers: Renderers) -> list[JobDefinition]:
     _reject_overrides(task, ["split_column", "score_column", "score_columns"])
-    job_name = _extract_job_name(task)
+    job_name_base = _extract_job_name(task)
     data_path = _task_data_path(task, global_cfg)
     epochs = int(task.get("epochs", global_cfg.epochs))
     split_seed = int(task["split_seed"])
     chemprop_seed = int(task.get("chemprop_seed", split_seed))
-    job_name_seeded = _ensure_seed_suffix(job_name, split_seed)
+    job_name_seeded = _ensure_seed_suffix(job_name_base, split_seed)
     job_slug = _slugify(job_name_seeded)
     split_column = _split_column(split_seed)
     keep_columns = ["smiles", split_column]
@@ -406,6 +458,7 @@ def _build_multilabel_jobs(task: Mapping[str, object], global_cfg: GC, renderers
     }
     model_dir = _format_model_dir(task.get("model_dir"), global_cfg, model_context)
 
+    submit_flag = _should_submit(task, global_cfg)
     content = _render_multilabel_script(
         job_name=job_name_seeded,
         job_slug=job_slug,
@@ -424,7 +477,9 @@ def _build_multilabel_jobs(task: Mapping[str, object], global_cfg: GC, renderers
         renderers=renderers,
     )
     filename = f"{job_slug}.sh"
-    return [JobDefinition(job_name=job_name_seeded, filename=filename, content=content)]
+    return [
+        JobDefinition(job_name=job_name_seeded, filename=filename, content=content, submit=submit_flag)
+    ]
 
 
 def _build_regression_jobs(task: Mapping[str, object], global_cfg: GC, renderers: Renderers) -> list[JobDefinition]:
@@ -447,6 +502,7 @@ def _build_regression_jobs(task: Mapping[str, object], global_cfg: GC, renderers
         compound_screens_column = "screens"
     compound_screens_column = str(compound_screens_column)
     screens_weight_mode = _screens_weight_mode_from_task(task)
+    submit_flag = _should_submit(task, global_cfg)
 
     job_defs: list[JobDefinition] = []
     for score_col in score_list:
@@ -482,7 +538,7 @@ def _build_regression_jobs(task: Mapping[str, object], global_cfg: GC, renderers
             screens_weight_mode=screens_weight_mode,
         )
         filename = f"{per_slug}.sh"
-        job_defs.append(JobDefinition(per_job_name, filename, content))
+        job_defs.append(JobDefinition(per_job_name, filename, content, submit_flag))
 
     return job_defs
 
@@ -505,6 +561,7 @@ def _build_threshold_jobs(task: Mapping[str, object], global_cfg: GC, renderers:
         compound_screens_column = "screens"
     compound_screens_column = str(compound_screens_column)
     screens_weight_mode = _screens_weight_mode_from_task(task)
+    submit_flag = _should_submit(task, global_cfg)
 
     threshold_specs = task.get("thresholds")
     if not isinstance(threshold_specs, list) or not threshold_specs:
@@ -581,7 +638,7 @@ def _build_threshold_jobs(task: Mapping[str, object], global_cfg: GC, renderers:
             screens_weight_mode=screens_weight_mode,
         )
         filename = f"{per_slug}.sh"
-        jobs.append(JobDefinition(per_job_name, filename, content))
+        jobs.append(JobDefinition(per_job_name, filename, content, submit_flag))
 
     return jobs
 
@@ -636,6 +693,9 @@ def _threshold_arguments(
     return args
 
 
+CLI_MODULE = "model_jobs_uge.cli"
+
+
 def _render_multilabel_script(
     *,
     job_name: str,
@@ -673,7 +733,7 @@ def _render_multilabel_script(
     body_lines.append('echo "[INFO] [$START] [$(date)] [$$] Trimming multi-task dataset"')
 
     trim_lines = [
-        '"${PYTHON_BIN}" -m model_jobs.cli trim-columns \\',
+        f'"${{PYTHON_BIN}}" -m {CLI_MODULE} trim-columns \\',
         '  --input "${DATA_PATH}" \\',
         '  --output "${TEMP_PARQUET}" \\',
     ]
@@ -764,7 +824,7 @@ def _render_regression_script(
 
     lines.append('echo "[INFO] [$START] [$(date)] [$$] Preparing regression dataset"')
     prep_lines = [
-        '"${PYTHON_BIN}" -m model_jobs.cli prepare-regression \\',
+        f'"${{PYTHON_BIN}}" -m {CLI_MODULE} prepare-regression \\',
         '  --input "${DATA_PATH}" \\',
         '  --output "${TEMP_PARQUET}" \\',
         '  --smiles-column "smiles" \\',
@@ -874,7 +934,7 @@ def _render_threshold_script(
     ]
 
     prep_lines = [
-        '"${PYTHON_BIN}" -m model_jobs.cli prepare-threshold-classifier \\',
+        f'"${{PYTHON_BIN}}" -m {CLI_MODULE} prepare-threshold-classifier \\',
         '  --input "${DATA_PATH}" \\',
         '  --output "${TEMP_PARQUET}" \\',
         '  --smiles-column "smiles" \\',
@@ -936,12 +996,41 @@ def _render_threshold_script(
 
 
 # ---------------------------------------------------------------------------
-# Script rendering
+# UGE rendering
 # ---------------------------------------------------------------------------
 
 
 def _render_header(job_name: str, global_cfg: GlobalConfig) -> str:
-    return "#!/bin/bash"
+    lines: list[str] = ["#!/bin/bash"]
+    lines.append(f"#$ -N {job_name}")
+    lines.append(f"#$ -pe smp {global_cfg.cpus}")
+    lines.append("#$ -cwd")
+    lines.append("#$ -S /bin/bash")
+    lines.append(f"#$ -l m_mem_free={global_cfg.memory}")
+    lines.append(f"#$ -l h_rt={global_cfg.runtime}")
+
+    if global_cfg.gpu_cards > 0:
+        lines.append(f"#$ -l gpu_card={global_cfg.gpu_cards}")
+
+    log_prefix = global_cfg.logs_dir / job_name
+    lines.append(f"#$ -e {log_prefix}_$JOB_ID.err")
+    lines.append(f"#$ -o {log_prefix}_$JOB_ID.out")
+
+    for directive in global_cfg.queue_directives:
+        formatted = str(directive).strip()
+        if formatted:
+            lines.append(f"#$ {formatted}")
+
+    if global_cfg.email and global_cfg.email_notifications:
+        lines.append(f"#$ -M {global_cfg.email}")
+        lines.append(f"#$ -m {global_cfg.notify_events}")
+
+    for extra in global_cfg.extra_header_directives:
+        extra = str(extra).strip()
+        if extra:
+            lines.append(extra)
+
+    return "\n".join(lines)
 
 
 def _common_env_base_lines(global_cfg: BaseGlobalConfig, job_name: str) -> list[str]:
@@ -968,6 +1057,9 @@ def _common_env_base_lines(global_cfg: BaseGlobalConfig, job_name: str) -> list[
 
 
 def _append_conda_and_binaries(lines: list[str], global_cfg: BaseGlobalConfig) -> None:
+    if global_cfg.conda_commands:
+        lines.append("")
+        lines.extend(global_cfg.conda_commands)
     if global_cfg.conda_activate:
         lines.append(global_cfg.conda_activate)
 
@@ -983,11 +1075,15 @@ def _append_conda_and_binaries(lines: list[str], global_cfg: BaseGlobalConfig) -
 
 def _render_common_env(global_cfg: GlobalConfig, job_name: str) -> str:
     lines = _common_env_base_lines(global_cfg, job_name)
+    if global_cfg.gpu_cards > 0 and global_cfg.gpu_map_script:
+        lines.append("")
+        lines.append(f"export CUDA_VISIBLE_DEVICES=$({global_cfg.gpu_map_script})")
+        lines.append('echo "[INFO] [$START] [$(date)] [$$] Selected GPUs: ${CUDA_VISIBLE_DEVICES}"')
     _append_conda_and_binaries(lines, global_cfg)
     return "\n".join(lines)
 
 
-_RENDERERS = Renderers(
+_UGE_RENDERERS = Renderers(
     header=_render_header,
     common_env=_render_common_env,
 )

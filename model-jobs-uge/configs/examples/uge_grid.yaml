@@ -1,0 +1,51 @@
+global:
+  email: your.name@example.com
+  logs_dir: /abs/path/to/uge/logs
+  models_dir: /abs/path/to/uge/models
+  temp_dir: /abs/path/to/uge/temp
+  conda_commands: []
+  conda_activate: "conda activate frequent-hitters"
+  cpus: 4
+  memory: 20G
+  runtime: 100000
+  gpu_cards: 1
+  submit: true
+  datasets:
+    bio_reg: /abs/path/to/processed/biochemical_regression.parquet
+    bio_thresholds: /abs/path/to/processed/biochemical_thresholds.json
+
+defaults:
+  all:
+    epochs: 3
+    ensemble_size: 1
+    split_seed: "{seed}"
+    chemprop_seed: "{seed}"
+  hit_rate:
+    compound_min_screens: 20
+    compound_screens_column: screens
+    screens_weight_mode: linear
+  threshold:
+    thresholds:
+      expand:
+        upper: [95, 90]
+      template:
+        suffix: "p50_{upper}"
+        lower_percentile: 50
+        upper_percentile: "{upper}"
+
+sweeps:
+  seed: [1, 2]
+
+tasks:
+  - type: regression
+    job_name: "uge_reg"
+    data_path: bio_reg
+    expand:
+      seed: "@seed"
+
+  - type: threshold
+    job_name: "uge_thr"
+    data_path: bio_reg
+    thresholds_json: bio_thresholds
+    expand:
+      seed: "@seed"

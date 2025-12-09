@@ -264,7 +264,7 @@ def score_by_seed(
     priors: dict[str, object] = {}
 
     for seed in seeds:
-        split_col = f"split{seed}"
+        split_col = f"split_seed{seed}"
         score_col = f"score_seed{seed}"
         if split_col not in regression_df.columns:
             raise KeyError(f"Missing split column '{split_col}' for seed {seed}.")
