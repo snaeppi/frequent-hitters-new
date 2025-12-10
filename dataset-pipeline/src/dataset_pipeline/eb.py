@@ -75,19 +75,13 @@ def _aggregate_compound_counts(
     hits_col: str,
 ) -> pl.DataFrame:
     """Aggregate per-compound screen and hit counts for the provided lazy frame."""
-    group_keys = ["smiles"]
-    schema_names = data_lf.collect_schema().names()
-    include_compound_id = "compound_id" in schema_names
-
     value_exprs: list[pl.Expr] = [
         pl.len().alias(screens_col),
         pl.col("active").fill_null(0).cast(pl.UInt32).sum().alias(hits_col),
     ]
-    if include_compound_id:
-        value_exprs.append(pl.col("compound_id").drop_nulls().first().alias("compound_id"))
 
     aggregated = (
-        data_lf.group_by(group_keys)
+        data_lf.group_by(["smiles"])
         .agg(value_exprs)
         .with_columns(
             [
@@ -202,7 +196,6 @@ def compute_compound_counts(
     all_compounds = compound_counts_df.with_columns(
         [
             pl.Series("hit_rate", raw_rate_np).cast(pl.Float64),
-            filter_expr.alias("passes_reliability_filter"),
             filter_expr.alias("regression_eligible"),
             prior_fit_expr.alias("meets_prior_fit_threshold"),
         ]

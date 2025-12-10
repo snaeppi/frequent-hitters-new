@@ -42,11 +42,10 @@ def load_assay_table(
     lf_columns = lf.collect_schema().names()
     schema.ensure_required_columns(lf_columns)
 
-    optional_present = [col for col in schema.OPTIONAL_COLUMNS if col in lf_columns]
-    ordered_cols = schema.canonical_column_order(optional_present)
+    ordered_cols = schema.canonical_column_order()
     lf = lf.select(ordered_cols)
 
-    string_cols = ["smiles", "assay_id"] + optional_present
+    string_cols = ["smiles", "assay_id"]
     lf = lf.with_columns(_canonicalize_strings(string_cols))
     lf = lf.with_columns(
         pl.col("active").cast(pl.Int8, strict=False).alias("active"),

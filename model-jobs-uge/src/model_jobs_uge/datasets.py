@@ -46,11 +46,22 @@ def _apply_compound_min_screens(
     *,
     min_screens: float | None,
     screens_column: str,
+    split_column: str | None = None,
+    test_split_value: str = "test",
 ) -> pl.LazyFrame:
-    """Filter compounds by minimum screen count when requested."""
+    """Filter compounds by minimum screen count when requested.
+
+    When a split column is provided the filter is skipped for the test split so
+    evaluation rows remain comparable across model variants.
+    """
     if min_screens is None:
         return lf
-    return lf.filter(pl.col(screens_column) >= float(min_screens))
+    threshold = float(min_screens)
+    if split_column is None:
+        return lf.filter(pl.col(screens_column) >= threshold)
+    return lf.filter(
+        (pl.col(split_column) == test_split_value) | (pl.col(screens_column) >= threshold)
+    )
 
 
 def _normalize_screens_weight_mode(value: str | None) -> str:
@@ -107,9 +118,11 @@ def write_regression_dataset(
         lf,
         min_screens=compound_min_screens,
         screens_column=compound_screens_column,
+        split_column=split_column,
     )
-    if expr := _screens_weight_expr(compound_screens_column, weight_mode):
-        lf = lf.with_columns(expr)
+    weight_expr = _screens_weight_expr(compound_screens_column, weight_mode)
+    if weight_expr is not None:
+        lf = lf.with_columns(weight_expr)
     columns = [smiles_column, split_column]
     if needs_screens_column:
         columns.append(compound_screens_column)
@@ -234,6 +247,7 @@ def write_threshold_classifier_dataset(
         lf,
         min_screens=compound_min_screens,
         screens_column=compound_screens_column,
+        split_column=split_column,
     )
     weight_expr = _screens_weight_expr(compound_screens_column, weight_mode)
     base_select = [
@@ -247,7 +261,9 @@ def write_threshold_classifier_dataset(
         lf.select(base_select)
         .filter(metric.is_not_null())
         .with_columns([expr for expr in [target_expr, weight_expr] if expr is not None])
-        .filter(pl.col(target_column).is_not_null())
+        .filter(
+            (pl.col(split_column) == "test") | pl.col(target_column).is_not_null()
+        )
         .select(
             [
                 pl.col(smiles_column),

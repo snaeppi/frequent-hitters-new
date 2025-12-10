@@ -180,20 +180,6 @@ def _attach_scaffolds(
     return compound_metadata.with_columns(scaffold_series)
 
 
-def _ensure_regression_flag(df: pl.DataFrame) -> pl.DataFrame:
-    """Attach a regression_eligible boolean column."""
-    if "regression_eligible" in df.columns:
-        return df.with_columns(pl.col("regression_eligible").cast(pl.Boolean))
-    if "passes_reliability_filter" in df.columns:
-        return df.with_columns(
-            pl.col("passes_reliability_filter").cast(pl.Boolean).alias("regression_eligible")
-        )
-    raise ValueError(
-        "compound_metadata must include either 'regression_eligible' "
-        "or 'passes_reliability_filter'."
-    )
-
-
 def _assign_scaffold_split_column(
     compound_df: pl.DataFrame,
     *,
@@ -299,7 +285,7 @@ def assign_multiseed_splits(
         "val": val_frac / train_val_total,
     }
 
-    base_df = _ensure_regression_flag(compound_metadata)
+    base_df = compound_metadata
     base_df = _attach_scaffolds(base_df, scaffold_store)
     base_df = base_df.with_columns(pl.col("regression_eligible").fill_null(False).cast(pl.Boolean))
 

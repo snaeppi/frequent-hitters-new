@@ -12,13 +12,7 @@ REQUIRED_COLUMNS = {
     "active": pl.Int8,
 }
 
-OPTIONAL_COLUMNS = {
-    "compound_id": pl.Utf8,
-}
-
 VALID_ASSAY_FORMATS = {"biochemical", "cellular"}
-
-ALL_COLUMNS = {**REQUIRED_COLUMNS, **OPTIONAL_COLUMNS}
 
 
 def ensure_required_columns(columns: Iterable[str]) -> None:
@@ -29,7 +23,6 @@ def ensure_required_columns(columns: Iterable[str]) -> None:
         raise ValueError(f"Missing required columns: {joined}")
 
 
-def canonical_column_order(present_optional: Iterable[str]) -> list[str]:
+def canonical_column_order(_present_optional: Iterable[str] | None = None) -> list[str]:
     """Return a stable column order for downstream writes."""
-    optional = [col for col in OPTIONAL_COLUMNS if col in set(present_optional)]
-    return list(REQUIRED_COLUMNS) + optional
+    return list(REQUIRED_COLUMNS)

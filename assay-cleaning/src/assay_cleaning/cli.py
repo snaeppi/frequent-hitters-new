@@ -243,6 +243,30 @@ def clean_split(
     # 1. Load Data
     hts_lazy = scan_table(hts_file)
     assay_props_lazy = scan_table(assay_props_file)
+    hts_columns = hts_lazy.collect_schema().names()
+
+    # Warn if the same compound appears with multiple SMILES in a single assay (likely tautomers)
+    tautomer_conflicts = pl.DataFrame()
+    if smiles_col in hts_columns:
+        tautomer_conflicts = (
+            hts_lazy
+            .select([id_col, assay_col, smiles_col])
+            .group_by([id_col, assay_col])
+            .agg(
+                pl.col(smiles_col)
+                .drop_nulls()
+                .n_unique()
+                .alias("unique_smiles_per_assay")
+            )
+            .filter(pl.col("unique_smiles_per_assay") > 1)
+            .collect(streaming=True)
+        )
+        if tautomer_conflicts.height:
+            logger.warning(
+                "Detected %d compound/assay pairs with multiple SMILES entries (likely tautomers). "
+                "Collapse raw values before computing R-scores.",
+                tautomer_conflicts.height,
+            )
 
     # 2. Prepare SMILES List
     if id_to_smiles_file:
@@ -306,27 +330,45 @@ def clean_split(
 
     processed_df = processed_df.filter(pl.col("canonical_smiles").is_not_null())
     retained_smiles_count = processed_df.height
+    unique_canonical_smiles_count = int(processed_df.get_column("canonical_smiles").n_unique())
+    tautomer_collapse_count = retained_smiles_count - unique_canonical_smiles_count
 
     logger.info("Structure cleaning stats:")
     logger.info("  - Input unique structures: %s", f"{original_smiles_count:,}")
-    logger.info("  - Valid canonical structures: %s", f"{retained_smiles_count:,}")
+    logger.info("  - Valid canonical structures (pre-dedup): %s", f"{retained_smiles_count:,}")
+    logger.info("  - Unique canonical structures: %s", f"{unique_canonical_smiles_count:,}")
+    logger.info("  - Collapsed to canonical SMILES: %s", f"{tautomer_collapse_count:,}")
     logger.info("  - Dropped: %s", f"{original_smiles_count - retained_smiles_count:,}")
     logger.info("Drop reasons (unique SMILES):")
     for reason, count in sorted(reason_counts_map.items(), key=lambda kv: kv[1], reverse=True):
         logger.info("  - %s: %s", reason, f"{count:,}")
 
     # 5. Join Back to Data
+    output_smiles_col = "smiles"
     clean_ids = (
         id_to_smiles_df
         .join(processed_df, on=smiles_col, how="inner")
         .select([id_col, "canonical_smiles"])
+        .unique()
     )
+    unique_compound_ids_clean = int(clean_ids.get_column(id_col).n_unique())
+    unique_canonical_from_ids = int(clean_ids.get_column("canonical_smiles").n_unique())
+    compound_id_collapse_count = max(unique_compound_ids_clean - unique_canonical_from_ids, 0)
+    if compound_id_collapse_count:
+        logger.info(
+            "Compound ID collapses to canonical SMILES: %s (from %s unique IDs to %s canonical SMILES)",
+            f"{compound_id_collapse_count:,}",
+            f"{unique_compound_ids_clean:,}",
+            f"{unique_canonical_from_ids:,}",
+        )
 
     clean_hts_lazy = (
         hts_lazy.join(clean_ids.lazy(), on=id_col, how="inner")
-        .with_columns(pl.col("canonical_smiles").alias(smiles_col))
-        .drop("canonical_smiles")
+        .with_columns(pl.col("canonical_smiles").alias(output_smiles_col))
+        .drop(["canonical_smiles", id_col])
     )
+    if smiles_col != output_smiles_col and smiles_col in hts_columns:
+        clean_hts_lazy = clean_hts_lazy.drop(smiles_col)
 
     # 6. Join Assay Props
     clean_hts_lazy = clean_hts_lazy.join(
@@ -351,7 +393,7 @@ def clean_split(
     else:
         clean_hts_lazy = clean_hts_lazy.with_columns(pl.col("active").cast(pl.Int8))
 
-    compound_col_out = "compound_id" if rename_columns else id_col
+    compound_col_out = output_smiles_col
     assay_col_out = "assay_id" if rename_columns else assay_col
 
     def summarize_lazy(
@@ -397,6 +439,10 @@ def clean_split(
         "structure_cleaning": {
             "unique_smiles": original_smiles_count,
             "valid_canonical_smiles": retained_smiles_count,
+            "unique_canonical_smiles": unique_canonical_smiles_count,
+            "tautomer_collapses": tautomer_collapse_count,
+            "unique_compound_ids_with_canonical": unique_compound_ids_clean,
+            "compound_id_collapses": compound_id_collapse_count,
             "dropped": original_smiles_count - retained_smiles_count,
             "drop_reasons": reason_counts_map,
             "skip_tautomers": skip_tautomers,

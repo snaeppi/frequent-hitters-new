@@ -84,11 +84,16 @@ def write_model_datasets(
 
     multilabel_matrix, assay_cols = _pivot_multilabel_matrix(retained_data_lf)
 
-    def _prepare_frame(df: pl.DataFrame, split_cols: list[str]) -> pl.DataFrame:
+    def _prepare_frame(
+        df: pl.DataFrame,
+        split_cols: list[str],
+        *,
+        include_assay_columns: bool = True,
+    ) -> pl.DataFrame:
         prepared = df
         bool_cols = [
             col
-            for col in ["regression_eligible", "passes_reliability_filter"]
+            for col in ["regression_eligible"]
             if col in prepared.columns
         ]
         if bool_cols:
@@ -102,16 +107,14 @@ def write_model_datasets(
                     pl.col("screens").fill_null(0),
                 ]
             )
-        prepared = prepared.join(multilabel_matrix, on="smiles", how="left")
-        if assay_cols:
+        if include_assay_columns and assay_cols:
+            prepared = prepared.join(multilabel_matrix, on="smiles", how="left")
             prepared = prepared.with_columns(_boolean_cast_expressions(assay_cols))
         base_cols: list[str] = ["smiles"]
-        if "compound_id" in prepared.columns:
-            base_cols.append("compound_id")
         base_cols.extend(
             [
                 col
-                for col in ["regression_eligible", "passes_reliability_filter"]
+                for col in ["regression_eligible"]
                 if col in prepared.columns
             ]
         )
@@ -128,25 +131,22 @@ def write_model_datasets(
             if col.startswith("score_seed") or col == "score"
         ]
         base_cols.extend(score_cols)
-        return prepared.select(
-            base_cols + split_cols + [col for col in assay_cols if col in prepared.columns]
+        assay_selection = (
+            [col for col in assay_cols if col in prepared.columns] if include_assay_columns else []
         )
+        return prepared.select(base_cols + split_cols + assay_selection)
 
     regression_df = _prepare_frame(
-        reg_split_df.filter(pl.col("regression_eligible")), reg_split_columns
+        reg_split_df.filter(pl.col("regression_eligible")),
+        reg_split_columns,
+        include_assay_columns=False,
     ).sort("smiles")
-    regression_path = output_dir / f"{assay_format}_regression.parquet"
-    regression_df.write_parquet(regression_path)
 
     multilabel_df = _prepare_frame(mt_split_df, mt_split_columns).sort("smiles")
     multilabel_path = output_dir / f"{assay_format}_multilabel.parquet"
     multilabel_df.write_parquet(multilabel_path)
 
-    reliability_mask = (
-        pl.col("passes_reliability_filter")
-        if "passes_reliability_filter" in regression_df.columns
-        else pl.lit(True)
-    )
+    reliability_mask = pl.col("regression_eligible")
 
     percentiles_by_seed: dict[str, dict[str, float]] = {}
     score_column_by_seed: dict[str, str] = {}
@@ -171,13 +171,11 @@ def write_model_datasets(
         score_column_by_seed[str(seed)] = candidate_score_col
         compound_counts_by_seed[str(seed)] = int(subset.height)
 
-    # Backward-compatible single-seed payload
-    percentiles_single = None
-    score_column_single = None
-    if len(seeds) == 1:
-        seed_key = str(seeds[0])
-        percentiles_single = {"score": percentiles_by_seed[seed_key]}
-        score_column_single = score_column_by_seed[seed_key]
+    # Drop columns that are irrelevant for the regression output.
+    regression_df = regression_df.drop("regression_eligible", missing="ignore")
+
+    regression_path = output_dir / f"{assay_format}_regression.parquet"
+    regression_df.write_parquet(regression_path)
 
     metadata = {
         "assay_format": assay_format,
@@ -188,10 +186,6 @@ def write_model_datasets(
         "score_column_by_seed": score_column_by_seed,
         "compound_counts_by_seed": compound_counts_by_seed,
     }
-    if percentiles_single is not None:
-        metadata["percentiles"] = percentiles_single
-        metadata["score_column"] = score_column_single
-        metadata["compound_count"] = compound_counts_by_seed[str(seeds[0])]
 
     thresholds_path = output_dir / f"{assay_format}_thresholds.json"
     thresholds_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
